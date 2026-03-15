@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { ArtifactsModule } from './artifacts/artifacts.module';
 import { AgentsModule } from './agents/agents.module';
 import { HealthModule } from './health/health.module';
 import { IterationPlansModule } from './iteration-plans/iteration-plans.module';
@@ -10,6 +11,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
   imports: [
+    ArtifactsModule,
     HealthModule,
     WorkspacesModule,
     ProvidersModule,

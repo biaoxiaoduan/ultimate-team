@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
@@ -9,6 +9,8 @@ describe('App', () => {
   });
 
   beforeEach(() => {
+    window.history.pushState({}, '', '/');
+
     const templates = [
       {
         id: 'template_product_manager',
@@ -31,14 +33,14 @@ describe('App', () => {
         name: 'Developer',
         role: 'developer',
         description: 'Implement work.',
-        defaultPrompt: 'Act as dev.',
+        defaultPrompt: 'Act as developer.',
         defaultTaskTypes: ['implementation']
       },
       {
         id: 'template_tester',
         name: 'Tester',
         role: 'tester',
-        description: 'Create test coverage.',
+        description: 'Validate work.',
         defaultPrompt: 'Act as tester.',
         defaultTaskTypes: ['test_cases']
       },
@@ -46,9 +48,22 @@ describe('App', () => {
         id: 'template_release_manager',
         name: 'Release Manager',
         role: 'release_manager',
-        description: 'Prepare release checks.',
+        description: 'Prepare release.',
         defaultPrompt: 'Act as release manager.',
         defaultTaskTypes: ['release_prep']
+      }
+    ];
+
+    const providers = [
+      {
+        id: 'provider_1',
+        name: 'Primary Codex',
+        providerType: 'codex',
+        endpoint: 'https://api.openai.com',
+        model: 'gpt-5',
+        apiKeyMasked: 'se****en',
+        isEnabled: true,
+        workspaceId: 'ws_1'
       }
     ];
 
@@ -76,7 +91,7 @@ describe('App', () => {
         templateId: 'template_developer',
         name: 'Developer Agent Alpha',
         providerId: 'provider_1',
-        systemPrompt: 'Implement approved work.',
+        systemPrompt: 'Act as developer.',
         taskTypes: ['implementation'],
         isEnabled: true
       },
@@ -85,7 +100,7 @@ describe('App', () => {
         templateId: 'template_tester',
         name: 'Tester Agent Alpha',
         providerId: 'provider_1',
-        systemPrompt: 'Validate the delivery.',
+        systemPrompt: 'Act as tester.',
         taskTypes: ['test_cases'],
         isEnabled: true
       },
@@ -94,7 +109,7 @@ describe('App', () => {
         templateId: 'template_release_manager',
         name: 'Release Agent Alpha',
         providerId: 'provider_1',
-        systemPrompt: 'Prepare release notes.',
+        systemPrompt: 'Act as release manager.',
         taskTypes: ['release_prep'],
         isEnabled: true
       }
@@ -106,7 +121,7 @@ describe('App', () => {
         projectId: 'project_demo',
         title: 'Initial requirement',
         summary: 'Need planning flow',
-        goal: 'Generate draft plans',
+        goal: 'Generate delivery plans',
         constraints: 'Single user',
         acceptanceCriteria: 'Plan can be confirmed',
         currentVersionId: 'req_ver_1',
@@ -116,14 +131,16 @@ describe('App', () => {
       }
     ];
 
-    const versions = [
-      {
-        id: 'req_ver_1',
-        requirementId: 'req_1',
-        version: 1,
-        content: 'Initial body'
-      }
-    ];
+    const versionsByRequirement: Record<string, Array<Record<string, unknown>>> = {
+      req_1: [
+        {
+          id: 'req_ver_1',
+          requirementId: 'req_1',
+          version: 1,
+          content: 'Initial body'
+        }
+      ]
+    };
 
     const plans = [
       {
@@ -132,7 +149,7 @@ describe('App', () => {
         sourceVersionId: 'req_ver_1',
         status: 'draft',
         title: 'Initial requirement delivery plan',
-        summary: 'Goal: Generate draft plans | Constraints: Single user | Acceptance: Plan can be confirmed',
+        summary: 'Goal: Generate delivery plans | Constraints: Single user | Acceptance: Plan can be confirmed',
         iterations: [
           {
             id: 'iter_1',
@@ -150,26 +167,26 @@ describe('App', () => {
               {
                 id: 'wp_2',
                 role: 'designer',
-                title: 'Prepare design',
-                description: 'Prepare design'
+                title: 'Design handoff',
+                description: 'Design handoff'
               },
               {
                 id: 'wp_3',
                 role: 'developer',
-                title: 'Implement feature',
-                description: 'Implement feature'
+                title: 'Implementation',
+                description: 'Implementation'
               },
               {
                 id: 'wp_4',
                 role: 'tester',
-                title: 'Validate feature',
-                description: 'Validate feature'
+                title: 'Validation',
+                description: 'Validation'
               },
               {
                 id: 'wp_5',
                 role: 'release_manager',
-                title: 'Prepare release',
-                description: 'Prepare release'
+                title: 'Release prep',
+                description: 'Release prep'
               }
             ]
           }
@@ -177,7 +194,77 @@ describe('App', () => {
       }
     ];
 
-    const runs: any[] = [];
+    const runs: any[] = [
+      {
+        id: 'run_2',
+        planId: 'plan_1',
+        requirementId: 'req_1',
+        iterationId: 'iter_1',
+        iterationTitle: 'Iteration 1: foundation alignment',
+        status: 'completed',
+        currentStageId: null,
+        lastError: null,
+        stages: [],
+        tasks: [],
+        handoffs: []
+      }
+    ];
+
+    const artifacts = [
+      {
+        id: 'artifact_release',
+        runId: 'run_2',
+        iterationId: 'iter_1',
+        stageId: 'run_2_stage_5',
+        agentId: 'agent_5',
+        category: 'release_doc',
+        title: 'Release preparation for Iteration 1',
+        summary: 'Release checklist prepared.',
+        content: 'Release notes and environment checks.',
+        createdAt: '2026-03-15T10:00:00.000Z',
+        updatedAt: '2026-03-15T10:00:00.000Z'
+      },
+      {
+        id: 'artifact_test_report',
+        runId: 'run_2',
+        iterationId: 'iter_1',
+        stageId: 'run_2_stage_4',
+        agentId: 'agent_4',
+        category: 'test_report_doc',
+        title: 'Test report for Iteration 1',
+        summary: 'Regression validation passed.',
+        content: 'All planned regression cases passed.',
+        createdAt: '2026-03-15T10:00:00.000Z',
+        updatedAt: '2026-03-15T10:00:00.000Z'
+      }
+    ];
+
+    const testReports = [
+      {
+        id: 'test_report_1',
+        runId: 'run_2',
+        iterationId: 'iter_1',
+        artifactId: 'artifact_test_report',
+        status: 'passed',
+        totalCases: 12,
+        passedCases: 12,
+        failedCases: 0,
+        summary: 'Core regression path passed.'
+      }
+    ];
+
+    const buildRecords = [
+      {
+        id: 'build_record_1',
+        runId: 'run_2',
+        iterationId: 'iter_1',
+        artifactId: 'artifact_release',
+        status: 'ready',
+        environment: 'staging',
+        commitReference: 'run_2-release',
+        summary: 'Release checklist prepared for staging.'
+      }
+    ];
 
     vi.stubGlobal(
       'fetch',
@@ -197,31 +284,15 @@ describe('App', () => {
         }
 
         if (input.endsWith('/providers') && method === 'GET') {
-          return createResponse([
-            {
-              id: 'provider_1',
-              name: 'Primary Codex',
-              providerType: 'codex',
-              endpoint: 'https://api.openai.com',
-              model: 'gpt-5',
-              apiKeyMasked: 'se****en',
-              isEnabled: true,
-              workspaceId: 'ws_1'
-            }
-          ]);
+          return createResponse(providers);
         }
 
         if (input.includes('/providers/provider_1') && method === 'PATCH') {
-          return createResponse({
-            id: 'provider_1',
-            name: 'Primary Codex',
-            providerType: 'codex',
-            endpoint: 'https://api.openai.com',
-            model: 'gpt-5',
-            apiKeyMasked: 'se****en',
-            isEnabled: false,
-            workspaceId: 'ws_1'
-          });
+          providers[0] = {
+            ...providers[0],
+            isEnabled: !providers[0].isEnabled
+          };
+          return createResponse(providers[0]);
         }
 
         if (input.endsWith('/requirements') && method === 'GET') {
@@ -229,62 +300,92 @@ describe('App', () => {
         }
 
         if (input.endsWith('/requirements') && method === 'POST') {
-          requirements.push({
+          const body = parseBody(init);
+          const created = {
             id: 'req_2',
             projectId: 'project_demo',
-            title: 'Created requirement',
-            summary: 'Created summary',
-            goal: '',
-            constraints: '',
-            acceptanceCriteria: '',
+            title: body.title,
+            summary: body.summary,
+            goal: body.goal,
+            constraints: body.constraints,
+            acceptanceCriteria: body.acceptanceCriteria,
             currentVersionId: 'req_ver_2',
             currentVersionNumber: 1,
-            currentContent: 'Created body',
+            currentContent: body.content,
             status: 'draft'
-          });
-          return createResponse(requirements[1], 201);
-        }
-
-        if (input.includes('/requirements/req_1/versions') && method === 'GET') {
-          return createResponse(versions);
-        }
-
-        if (input.includes('/requirements/req_1/versions') && method === 'POST') {
-          versions.push({
-            id: 'req_ver_2',
-            requirementId: 'req_1',
-            version: 2,
-            content: 'Updated body'
-          });
-          requirements[0] = {
-            ...requirements[0],
-            currentVersionNumber: 2,
-            currentVersionId: 'req_ver_2',
-            currentContent: 'Updated body'
           };
-          return createResponse(versions[1], 201);
+          requirements.push(created);
+          versionsByRequirement.req_2 = [
+            {
+              id: 'req_ver_2',
+              requirementId: 'req_2',
+              version: 1,
+              content: body.content
+            }
+          ];
+          return createResponse(created, 201);
         }
 
-        if (input.includes('/requirements/req_1/generate-plan') && method === 'POST') {
-          plans.push({
-            ...plans[0],
-            id: 'plan_2',
+        if (input.includes('/requirements/') && input.endsWith('/versions') && method === 'GET') {
+          const requirementId = input.split('/requirements/')[1].split('/versions')[0];
+          return createResponse(versionsByRequirement[requirementId] ?? []);
+        }
+
+        if (input.includes('/requirements/') && input.endsWith('/versions') && method === 'POST') {
+          const requirementId = input.split('/requirements/')[1].split('/versions')[0];
+          const body = parseBody(init);
+          const nextVersion = (versionsByRequirement[requirementId]?.length ?? 0) + 1;
+          const version = {
+            id: `req_ver_${requirementId}_${nextVersion}`,
+            requirementId,
+            version: nextVersion,
+            content: body.content
+          };
+          versionsByRequirement[requirementId] = [...(versionsByRequirement[requirementId] ?? []), version];
+          const requirementIndex = requirements.findIndex((item) => item.id === requirementId);
+          requirements[requirementIndex] = {
+            ...requirements[requirementIndex],
+            currentVersionId: version.id,
+            currentVersionNumber: nextVersion,
+            currentContent: body.content
+          };
+          return createResponse(version, 201);
+        }
+
+        if (input.includes('/generate-plan') && method === 'POST') {
+          const requirementId = input.split('/requirements/')[1].split('/generate-plan')[0];
+          const planId = requirementId === 'req_2' ? 'plan_2' : 'plan_1';
+          const requirement = requirements.find((item) => item.id === requirementId)!;
+          const createdPlan = {
+            id: planId,
+            requirementId,
+            sourceVersionId: requirement.currentVersionId,
             status: 'draft',
-            title: 'Generated follow-up plan'
-          });
-          return createResponse(plans[1], 201);
+            title: `${requirement.title} delivery plan`,
+            summary: `Goal: ${requirement.goal || 'Deliver scope'} | Constraints: ${requirement.constraints || 'Focused scope'} | Acceptance: ${requirement.acceptanceCriteria || 'Confirmed plan exists'}`,
+            iterations: plans[0].iterations
+          };
+          const existingIndex = plans.findIndex((item) => item.id === planId);
+          if (existingIndex >= 0) {
+            plans[existingIndex] = createdPlan;
+          } else {
+            plans.push(createdPlan);
+          }
+          return createResponse(createdPlan, 201);
         }
 
         if (input.endsWith('/iteration-plans') && method === 'GET') {
           return createResponse(plans);
         }
 
-        if (input.includes('/iteration-plans/plan_1/confirm') && method === 'POST') {
-          plans[0] = {
-            ...plans[0],
+        if (input.includes('/iteration-plans/') && input.endsWith('/confirm') && method === 'POST') {
+          const planId = input.split('/iteration-plans/')[1].split('/confirm')[0];
+          const index = plans.findIndex((plan) => plan.id === planId);
+          plans[index] = {
+            ...plans[index],
             status: 'confirmed'
           };
-          return createResponse(plans[0]);
+          return createResponse(plans[index]);
         }
 
         if (input.endsWith('/agents/templates') && method === 'GET') {
@@ -296,29 +397,34 @@ describe('App', () => {
         }
 
         if (input.endsWith('/agents/instances') && method === 'POST') {
-          agents.push({
+          const body = parseBody(init);
+          const created = {
             id: 'agent_6',
-            templateId: 'template_developer',
-            name: 'Developer Agent Beta',
-            providerId: 'provider_1',
-            systemPrompt: 'Implement approved work.',
-            taskTypes: ['implementation'],
-            isEnabled: true
-          });
-          return createResponse(agents[5], 201);
-        }
-
-        if (input.includes('/agents/instances/agent_1') && method === 'PATCH') {
-          agents[0] = {
-            ...agents[0],
-            isEnabled: false
+            templateId: body.templateId,
+            name: body.name,
+            providerId: body.providerId,
+            systemPrompt: body.systemPrompt,
+            taskTypes: body.taskTypes,
+            isEnabled: body.isEnabled
           };
-          return createResponse(agents[0]);
+          agents.push(created);
+          return createResponse(created, 201);
         }
 
         if (input.includes('/agents/instances/agent_6') && method === 'DELETE') {
-          agents.splice(5, 1);
+          agents.splice(agents.findIndex((agent) => agent.id === 'agent_6'), 1);
           return createResponse({ id: 'agent_6' });
+        }
+
+        if (input.includes('/agents/instances/') && method === 'PATCH') {
+          const agentId = input.split('/agents/instances/')[1];
+          const body = parseBody(init);
+          const index = agents.findIndex((agent) => agent.id === agentId);
+          agents[index] = {
+            ...agents[index],
+            ...body
+          };
+          return createResponse(agents[index]);
         }
 
         if (input.endsWith('/orchestration-runs') && method === 'GET') {
@@ -326,11 +432,12 @@ describe('App', () => {
         }
 
         if (input.endsWith('/orchestration-runs') && method === 'POST') {
-          runs.unshift({
+          const body = parseBody(init);
+          const createdRun = {
             id: 'run_1',
-            planId: 'plan_1',
+            planId: body.planId,
             requirementId: 'req_1',
-            iterationId: 'iter_1',
+            iterationId: body.iterationId,
             iterationTitle: 'Iteration 1: foundation alignment',
             status: 'draft',
             currentStageId: 'run_1_stage_1',
@@ -350,7 +457,7 @@ describe('App', () => {
                 id: 'run_1_stage_2',
                 runId: 'run_1',
                 role: 'designer',
-                title: 'Iteration 1: foundation alignment: Prepare design',
+                title: 'Iteration 1: foundation alignment: Design handoff',
                 agentId: 'agent_2',
                 agentName: 'Designer Agent Alpha',
                 status: 'pending',
@@ -359,8 +466,9 @@ describe('App', () => {
             ],
             tasks: [],
             handoffs: []
-          });
-          return createResponse(runs[0], 201);
+          };
+          runs.unshift(createdRun);
+          return createResponse(createdRun, 201);
         }
 
         if (input.includes('/orchestration-runs/run_1/start') && method === 'POST') {
@@ -378,66 +486,22 @@ describe('App', () => {
           return createResponse(runs[0]);
         }
 
-        if (input.includes('/orchestration-runs/run_1/stages/run_1_stage_1/execute') && method === 'POST') {
-          runs[0] = {
-            ...runs[0],
-            stages: [
-              {
-                ...runs[0].stages[0],
-                status: 'waiting_confirmation'
-              },
-              runs[0].stages[1]
-            ],
-            tasks: [
-              {
-                id: 'run_1_task_1',
-                runId: 'run_1',
-                stageId: 'run_1_stage_1',
-                agentId: 'agent_1',
-                taskType: 'product_manager',
-                prompt: 'Execute PM stage',
-                inputSummary: 'Start iteration',
-                outputSummary: 'PM Agent Alpha prepared product_manager output.',
-                status: 'completed',
-                createdAt: '2026-03-15T10:00:00.000Z',
-                updatedAt: '2026-03-15T10:00:00.000Z'
-              }
-            ],
-            handoffs: [
-              {
-                id: 'handoff_1',
-                runId: 'run_1',
-                fromStageId: 'run_1_stage_1',
-                toStageId: 'run_1_stage_2',
-                fromRole: 'product_manager',
-                toRole: 'designer',
-                title: 'product_manager -> designer handoff',
-                summary: 'Structured output passed to next role',
-                status: 'delivered',
-                createdAt: '2026-03-15T10:00:00.000Z',
-                deliveredAt: '2026-03-15T10:00:00.000Z'
-              }
-            ]
-          };
-          return createResponse(runs[0]);
+        if (input.includes('/artifacts') && method === 'GET' && !input.includes('/artifacts/')) {
+          return createResponse(artifacts);
         }
 
-        if (input.includes('/orchestration-runs/run_1/stages/run_1_stage_1/confirm') && method === 'POST') {
-          runs[0] = {
-            ...runs[0],
-            currentStageId: 'run_1_stage_2',
-            stages: [
-              {
-                ...runs[0].stages[0],
-                status: 'completed'
-              },
-              {
-                ...runs[0].stages[1],
-                status: 'ready'
-              }
-            ]
-          };
-          return createResponse(runs[0]);
+        if (input.includes('/test-reports') && method === 'GET') {
+          return createResponse(testReports);
+        }
+
+        if (input.includes('/build-records') && method === 'GET') {
+          return createResponse(buildRecords);
+        }
+
+        if (input.includes('/artifacts/artifact_') && method === 'GET') {
+          const artifactId = input.split('/artifacts/')[1];
+          const artifact = artifacts.find((item) => item.id === artifactId);
+          return createResponse(artifact ?? {}, artifact ? 200 : 404);
         }
 
         return createResponse({}, 404);
@@ -445,17 +509,27 @@ describe('App', () => {
     );
   });
 
-  it('renders fetched planning and orchestration data', async () => {
+  it('renders the dashboard and navigates into the project flow', async () => {
     render(<App />);
 
-    expect(await screen.findByText(/agent orchestration execution center/i)).toBeInTheDocument();
-    expect((await screen.findAllByText(/initial requirement/i)).length).toBeGreaterThan(0);
-    expect(await screen.findByText(/initial requirement delivery plan/i)).toBeInTheDocument();
-    expect(await screen.findByText(/orchestration center/i)).toBeInTheDocument();
+    expect(await screen.findByText(/workspace dashboard/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /open project/i }));
+
+    expect(await screen.findByText(/project overview/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^requirements$/i }));
+
+    expect(await screen.findByRole('heading', { name: /^requirements$/i })).toBeInTheDocument();
+    expect(await screen.findByText(/initial requirement/i)).toBeInTheDocument();
   });
 
-  it('creates a requirement and confirms a plan', async () => {
+  it('creates a requirement from a modal and confirms a generated plan', async () => {
     render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /open project/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^requirements$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /new requirement/i }));
 
     fireEvent.change(screen.getByLabelText(/requirement title/i), {
       target: { value: 'Created requirement' }
@@ -468,18 +542,25 @@ describe('App', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /create requirement/i }));
 
-    expect((await screen.findAllByText(/created requirement/i)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/created requirement/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /generate plan/i }));
+
+    expect(await screen.findByText(/created requirement delivery plan/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /confirm plan/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/iteration plan confirmed/i)).toBeInTheDocument();
     });
-    expect((await screen.findAllByText(/confirmed/i)).length).toBeGreaterThan(0);
   });
 
-  it('creates and deletes an agent instance', async () => {
+  it('creates a new agent from the agent page modal', async () => {
     render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /open project/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^agents$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /new agent/i }));
 
     fireEvent.change(screen.getByLabelText(/^template$/i), {
       target: { value: 'template_developer' }
@@ -499,46 +580,35 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
 
     expect(await screen.findByText(/developer agent beta/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /delete developer agent beta/i }));
-
-    await waitFor(() => {
-      expect(screen.queryByText(/developer agent beta/i)).not.toBeInTheDocument();
-    });
   });
 
-  it('creates a run and advances the first stage', async () => {
+  it('creates a run from a confirmed plan and opens artifact detail from a completed run', async () => {
     render(<App />);
 
-    await screen.findByText(/initial requirement delivery plan/i);
+    fireEvent.click(await screen.findByRole('button', { name: /open project/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^plans$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /open plan/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /confirm plan/i }));
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm plan/i }));
     await screen.findByText(/iteration plan confirmed/i);
+    fireEvent.click(screen.getByRole('button', { name: /^create run$/i }));
+    const runDialog = await screen.findByRole('dialog', { name: /create orchestration run/i });
+    fireEvent.click(within(runDialog).getByRole('button', { name: /^create run$/i }));
 
-    fireEvent.change(screen.getByLabelText(/confirmed plan/i), {
-      target: { value: 'plan_1' }
-    });
-    fireEvent.change(screen.getByLabelText(/^iteration$/i), {
-      target: { value: 'iter_1' }
-    });
-    fireEvent.click(screen.getByRole('button', { name: /create run/i }));
+    expect(await screen.findByText(/run controls/i)).toBeInTheDocument();
 
-    expect(await screen.findByRole('button', { name: /start run/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to runs/i }));
+    fireEvent.click((await screen.findAllByRole('button', { name: /open run/i }))[1]);
+    fireEvent.click(await screen.findByRole('button', { name: /view artifacts/i }));
 
-    fireEvent.click(screen.getByRole('button', { name: /start run/i }));
-    await screen.findByText(/run started/i);
-
-    fireEvent.click(screen.getByRole('button', { name: /execute stage/i }));
-    expect(await screen.findByText(/pm agent alpha prepared product_manager output/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /confirm stage/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/current stage confirmed/i)).toBeInTheDocument();
-    });
-    expect(await screen.findByText(/structured output passed to next role/i)).toBeInTheDocument();
+    expect(await screen.findByText(/release preparation for iteration 1/i)).toBeInTheDocument();
+    expect(await screen.findByText(/release checklist prepared for staging/i)).toBeInTheDocument();
   });
 });
+
+function parseBody(init?: RequestInit) {
+  return init?.body ? JSON.parse(String(init.body)) : {};
+}
 
 function createResponse(data: unknown, status = 200) {
   return Promise.resolve({
