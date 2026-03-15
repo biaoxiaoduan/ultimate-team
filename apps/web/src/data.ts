@@ -1,4 +1,4 @@
-import { ProviderConfig, Workspace } from './types';
+import { AgentInstance, AgentTemplate, IterationPlan, ProviderConfig, Requirement, Workspace } from './types';
 
 export const defaultWorkspaces: Workspace[] = [
   {
@@ -32,3 +32,52 @@ export const defaultProviders: ProviderConfig[] = [
     workspaceId: 'ws_1'
   }
 ];
+
+export const defaultRequirements: Requirement[] = [];
+
+export const defaultPlans: IterationPlan[] = [];
+
+export const defaultAgentTemplates: AgentTemplate[] = [
+  {
+    id: 'template_product_manager',
+    name: 'Product Manager',
+    role: 'product_manager',
+    description: 'Break down requirements and define acceptance.',
+    defaultPrompt: 'Act as a product manager agent.',
+    defaultTaskTypes: ['planning']
+  },
+  {
+    id: 'template_designer',
+    name: 'Designer',
+    role: 'designer',
+    description: 'Prepare design handoff.',
+    defaultPrompt: 'Act as a designer agent.',
+    defaultTaskTypes: ['design_handoff']
+  },
+  {
+    id: 'template_developer',
+    name: 'Developer',
+    role: 'developer',
+    description: 'Implement approved scope.',
+    defaultPrompt: 'Act as a developer agent.',
+    defaultTaskTypes: ['implementation']
+  },
+  {
+    id: 'template_tester',
+    name: 'Tester',
+    role: 'tester',
+    description: 'Create test coverage and reports.',
+    defaultPrompt: 'Act as a tester agent.',
+    defaultTaskTypes: ['test_cases']
+  },
+  {
+    id: 'template_release_manager',
+    name: 'Release Manager',
+    role: 'release_manager',
+    description: 'Prepare release configuration.',
+    defaultPrompt: 'Act as a release manager agent.',
+    defaultTaskTypes: ['release_prep']
+  }
+];
+
+export const defaultAgentInstances: AgentInstance[] = [];
