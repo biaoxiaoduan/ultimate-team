@@ -1,4 +1,4 @@
-import { ProviderConfig, Workspace } from './types';
+import { IterationPlan, ProviderConfig, Requirement, Workspace } from './types';
 
 export const defaultWorkspaces: Workspace[] = [
   {
@@ -32,3 +32,7 @@ export const defaultProviders: ProviderConfig[] = [
     workspaceId: 'ws_1'
   }
 ];
+
+export const defaultRequirements: Requirement[] = [];
+
+export const defaultPlans: IterationPlan[] = [];
