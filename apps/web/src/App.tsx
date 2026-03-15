@@ -1,7 +1,22 @@
 import { FormEvent, useEffect, useState } from 'react';
 
-import { defaultPlans, defaultProviders, defaultRequirements, defaultWorkspaces } from './data';
-import { IterationPlan, ProviderConfig, Requirement, RequirementVersion, Workspace } from './types';
+import {
+  defaultAgentInstances,
+  defaultAgentTemplates,
+  defaultPlans,
+  defaultProviders,
+  defaultRequirements,
+  defaultWorkspaces
+} from './data';
+import {
+  AgentInstance,
+  AgentTemplate,
+  IterationPlan,
+  ProviderConfig,
+  Requirement,
+  RequirementVersion,
+  Workspace
+} from './types';
 
 const API_BASE_URL = 'http://localhost:3001';
 
@@ -23,15 +38,37 @@ const initialRequirementForm: RequirementFormState = {
   content: ''
 };
 
+type AgentFormState = {
+  templateId: string;
+  name: string;
+  providerId: string;
+  systemPrompt: string;
+  taskTypes: string;
+  isEnabled: boolean;
+};
+
+const initialAgentForm: AgentFormState = {
+  templateId: '',
+  name: '',
+  providerId: '',
+  systemPrompt: '',
+  taskTypes: '',
+  isEnabled: true
+};
+
 export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>(defaultWorkspaces);
   const [providers, setProviders] = useState<ProviderConfig[]>(defaultProviders);
   const [requirements, setRequirements] = useState<Requirement[]>(defaultRequirements);
   const [plans, setPlans] = useState<IterationPlan[]>(defaultPlans);
+  const [agentTemplates, setAgentTemplates] = useState<AgentTemplate[]>(defaultAgentTemplates);
+  const [agentInstances, setAgentInstances] = useState<AgentInstance[]>(defaultAgentInstances);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string>('');
   const [selectedVersions, setSelectedVersions] = useState<RequirementVersion[]>([]);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [revisionContent, setRevisionContent] = useState('');
   const [requirementForm, setRequirementForm] = useState(initialRequirementForm);
+  const [agentForm, setAgentForm] = useState<AgentFormState>(initialAgentForm);
   const [statusMessage, setStatusMessage] = useState('Loading workspace and planning context...');
 
   useEffect(() => {
@@ -55,11 +92,17 @@ export function App() {
         fetchJson<Requirement[]>('/requirements'),
         fetchJson<IterationPlan[]>('/iteration-plans')
       ]);
+      const [templateData, instanceData] = await Promise.all([
+        fetchJson<AgentTemplate[]>('/agents/templates'),
+        fetchJson<AgentInstance[]>('/agents/instances')
+      ]);
 
       setWorkspaces(workspaceData);
       setProviders(providerData);
       setRequirements(requirementData);
       setPlans(planData);
+      setAgentTemplates(templateData);
+      setAgentInstances(instanceData);
 
       if (requirementData.length > 0) {
         setSelectedRequirementId((current) => current || requirementData[0].id);
@@ -132,6 +175,75 @@ export function App() {
 
     await refreshAll();
     setStatusMessage('Iteration plan confirmed.');
+  }
+
+  async function handleCreateOrUpdateAgent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const payload = {
+      templateId: agentForm.templateId,
+      name: agentForm.name,
+      providerId: agentForm.providerId,
+      systemPrompt: agentForm.systemPrompt,
+      taskTypes: agentForm.taskTypes
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      isEnabled: agentForm.isEnabled
+    };
+
+    if (editingAgentId) {
+      await fetchJson<AgentInstance>(`/agents/instances/${editingAgentId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+      setStatusMessage('Agent updated.');
+    } else {
+      await fetchJson<AgentInstance>('/agents/instances', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      setStatusMessage('Agent created.');
+    }
+
+    setEditingAgentId(null);
+    setAgentForm(initialAgentForm);
+    await refreshAll();
+  }
+
+  function startEditAgent(agent: AgentInstance) {
+    setEditingAgentId(agent.id);
+    setAgentForm({
+      templateId: agent.templateId,
+      name: agent.name,
+      providerId: agent.providerId,
+      systemPrompt: agent.systemPrompt,
+      taskTypes: agent.taskTypes.join(', '),
+      isEnabled: agent.isEnabled
+    });
+  }
+
+  async function handleDeleteAgent(agentId: string) {
+    await fetchJson<AgentInstance>(`/agents/instances/${agentId}`, {
+      method: 'DELETE'
+    });
+    if (editingAgentId === agentId) {
+      setEditingAgentId(null);
+      setAgentForm(initialAgentForm);
+    }
+    await refreshAll();
+    setStatusMessage('Agent deleted.');
+  }
+
+  async function handleToggleAgent(agent: AgentInstance) {
+    await fetchJson<AgentInstance>(`/agents/instances/${agent.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        isEnabled: !agent.isEnabled
+      })
+    });
+    await refreshAll();
+    setStatusMessage(agent.isEnabled ? 'Agent disabled.' : 'Agent enabled.');
   }
 
   const defaultWorkspace = workspaces.find((workspace) => workspace.isDefault);
@@ -335,6 +447,162 @@ export function App() {
                         ))}
                       </ul>
                     </section>
+                  ))}
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="content-grid">
+        <article className="panel">
+          <h2>Agent templates</h2>
+          <p className="panel-subtitle">Built-in roles that define the default behavior for sub-agents.</p>
+          <div className="card-stack">
+            {agentTemplates.map((template) => (
+              <article key={template.id} className="record-card">
+                <div className="record-header">
+                  <div>
+                    <strong>{template.name}</strong>
+                    <p>{template.role}</p>
+                  </div>
+                </div>
+                <p>{template.description}</p>
+                <div className="pill-row">
+                  {template.defaultTaskTypes.map((taskType) => (
+                    <span key={taskType} className="pill">
+                      {taskType}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel">
+          <h2>{editingAgentId ? 'Edit agent' : 'Create agent'}</h2>
+          <p className="panel-subtitle">Bind a role template to a configured provider.</p>
+          <form className="stack-form" onSubmit={handleCreateOrUpdateAgent}>
+            <select
+              aria-label="Agent template"
+              value={agentForm.templateId}
+              onChange={(event) =>
+                setAgentForm((current) => ({ ...current, templateId: event.target.value }))
+              }
+            >
+              <option value="">Select template</option>
+              {agentTemplates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Agent name"
+              placeholder="Agent name"
+              value={agentForm.name}
+              onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))}
+            />
+            <select
+              aria-label="Agent provider"
+              value={agentForm.providerId}
+              onChange={(event) =>
+                setAgentForm((current) => ({ ...current, providerId: event.target.value }))
+              }
+            >
+              <option value="">Select provider</option>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                </option>
+              ))}
+            </select>
+            <textarea
+              aria-label="Agent system prompt"
+              placeholder="Agent system prompt"
+              value={agentForm.systemPrompt}
+              onChange={(event) =>
+                setAgentForm((current) => ({ ...current, systemPrompt: event.target.value }))
+              }
+            />
+            <input
+              aria-label="Agent task types"
+              placeholder="Comma separated task types"
+              value={agentForm.taskTypes}
+              onChange={(event) =>
+                setAgentForm((current) => ({ ...current, taskTypes: event.target.value }))
+              }
+            />
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={agentForm.isEnabled}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, isEnabled: event.target.checked }))
+                }
+              />
+              <span>Enabled</span>
+            </label>
+            <div className="action-row">
+              <button type="submit">{editingAgentId ? 'Update agent' : 'Create agent'}</button>
+              {editingAgentId ? (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    setEditingAgentId(null);
+                    setAgentForm(initialAgentForm);
+                  }}
+                >
+                  Cancel edit
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <section className="panel">
+        <h2>Agent instances</h2>
+        <p className="panel-subtitle">The concrete agents that later participate in orchestration runs.</p>
+        <div className="card-stack">
+          {agentInstances.length === 0 ? (
+            <p>No agents created yet.</p>
+          ) : (
+            agentInstances.map((agent) => (
+              <article key={agent.id} className="record-card">
+                <div className="record-header">
+                  <div>
+                    <strong>{agent.name}</strong>
+                    <p>
+                      {agent.templateId} · {agent.isEnabled ? 'enabled' : 'disabled'}
+                    </p>
+                  </div>
+                  <div className="action-row">
+                    <button type="button" onClick={() => startEditAgent(agent)}>
+                      Edit
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => void handleToggleAgent(agent)}>
+                      {agent.isEnabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      onClick={() => void handleDeleteAgent(agent.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <p>{agent.systemPrompt || 'No prompt configured.'}</p>
+                <div className="pill-row">
+                  <span className="pill">Provider: {agent.providerId}</span>
+                  {agent.taskTypes.map((taskType) => (
+                    <span key={taskType} className="pill">
+                      {taskType}
+                    </span>
                   ))}
                 </div>
               </article>

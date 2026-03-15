@@ -63,3 +63,22 @@ export type IterationPlan = {
   summary: string;
   iterations: PlanIteration[];
 };
+
+export type AgentTemplate = {
+  id: string;
+  name: string;
+  role: 'product_manager' | 'designer' | 'developer' | 'tester' | 'release_manager';
+  description: string;
+  defaultPrompt: string;
+  defaultTaskTypes: string[];
+};
+
+export type AgentInstance = {
+  id: string;
+  templateId: string;
+  name: string;
+  providerId: string;
+  systemPrompt: string;
+  taskTypes: string[];
+  isEnabled: boolean;
+};

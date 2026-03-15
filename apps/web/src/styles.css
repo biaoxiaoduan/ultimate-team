@@ -124,6 +124,29 @@ body {
   cursor: pointer;
 }
 
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #d8d1c6;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ghost-button {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #f5f2ea !important;
+}
+
+.danger-button {
+  background: #b84f4f !important;
+  color: #fff7f0 !important;
+}
+
 .metadata-list {
   display: grid;
   gap: 16px;

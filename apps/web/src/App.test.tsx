@@ -9,6 +9,37 @@ describe('App', () => {
   });
 
   beforeEach(() => {
+    const templates = [
+      {
+        id: 'template_product_manager',
+        name: 'Product Manager',
+        role: 'product_manager',
+        description: 'Break down requirements.',
+        defaultPrompt: 'Act as PM.',
+        defaultTaskTypes: ['planning']
+      },
+      {
+        id: 'template_developer',
+        name: 'Developer',
+        role: 'developer',
+        description: 'Implement work.',
+        defaultPrompt: 'Act as dev.',
+        defaultTaskTypes: ['implementation']
+      }
+    ];
+
+    const agents = [
+      {
+        id: 'agent_1',
+        templateId: 'template_product_manager',
+        name: 'PM Agent Alpha',
+        providerId: 'provider_1',
+        systemPrompt: 'Act as PM.',
+        taskTypes: ['planning'],
+        isEnabled: true
+      }
+    ];
+
     const requirements = [
       {
         id: 'req_1',
@@ -139,6 +170,27 @@ describe('App', () => {
           return createResponse(plans);
         }
 
+        if (input.endsWith('/agents/templates') && method === 'GET') {
+          return createResponse(templates);
+        }
+
+        if (input.endsWith('/agents/instances') && method === 'GET') {
+          return createResponse(agents);
+        }
+
+        if (input.endsWith('/agents/instances') && method === 'POST') {
+          agents.push({
+            id: 'agent_2',
+            templateId: 'template_developer',
+            name: 'Developer Agent Alpha',
+            providerId: 'provider_1',
+            systemPrompt: 'Implement approved work.',
+            taskTypes: ['implementation'],
+            isEnabled: true
+          });
+          return createResponse(agents[1], 201);
+        }
+
         if (input.includes('/requirements/req_1/generate-plan') && method === 'POST') {
           plans.push({
             ...plans[0],
@@ -157,6 +209,24 @@ describe('App', () => {
           return createResponse(plans[0]);
         }
 
+        if (input.includes('/agents/instances/agent_1') && method === 'PATCH') {
+          agents[0] = {
+            ...agents[0],
+            isEnabled: false
+          };
+          return createResponse(agents[0]);
+        }
+
+        if (input.includes('/agents/instances/agent_1') && method === 'DELETE') {
+          agents.splice(0, 1);
+          return createResponse({ id: 'agent_1' });
+        }
+
+        if (input.includes('/agents/instances/agent_2') && method === 'DELETE') {
+          agents.splice(1, 1);
+          return createResponse({ id: 'agent_2' });
+        }
+
         return createResponse({}, 404);
       })
     );
@@ -168,6 +238,7 @@ describe('App', () => {
     expect(await screen.findByText(/requirements to iteration planning/i)).toBeInTheDocument();
     expect((await screen.findAllByText(/initial requirement/i)).length).toBeGreaterThan(0);
     expect(await screen.findByText(/initial requirement delivery plan/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/product manager/i)).length).toBeGreaterThan(0);
   });
 
   it('creates a requirement and confirms a plan', async () => {
@@ -192,6 +263,38 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/iteration plan confirmed/i)).toBeInTheDocument();
+    });
+  });
+
+  it('creates and deletes an agent instance', async () => {
+    render(<App />);
+
+    expect(await screen.findByText(/pm agent alpha/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/agent template/i), {
+      target: { value: 'template_developer' }
+    });
+    fireEvent.change(screen.getByLabelText(/agent name/i), {
+      target: { value: 'Developer Agent Alpha' }
+    });
+    fireEvent.change(screen.getByLabelText(/agent provider/i), {
+      target: { value: 'provider_1' }
+    });
+    fireEvent.change(screen.getByLabelText(/agent system prompt/i), {
+      target: { value: 'Implement approved work.' }
+    });
+    fireEvent.change(screen.getByLabelText(/agent task types/i), {
+      target: { value: 'implementation' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+
+    expect((await screen.findAllByText(/developer agent alpha/i)).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /delete/i })[1]);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/developer agent alpha/i)).not.toBeInTheDocument();
     });
   });
 });

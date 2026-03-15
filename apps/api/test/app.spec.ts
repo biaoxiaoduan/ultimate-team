@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { AgentsController } from '../src/agents/agents.controller';
+import { AgentsService } from '../src/agents/agents.service';
 import { HealthController } from '../src/health/health.controller';
 import { IterationPlansController } from '../src/iteration-plans/iteration-plans.controller';
 import { IterationPlansService } from '../src/iteration-plans/iteration-plans.service';
@@ -16,12 +18,14 @@ describe('API foundation', () => {
     const providersService = new ProvidersService(workspacesService);
     const requirementsService = new RequirementsService();
     const iterationPlansService = new IterationPlansService(requirementsService);
+    const agentsService = new AgentsService(providersService);
     return {
       healthController: new HealthController(),
       workspacesController: new WorkspacesController(workspacesService),
       providersController: new ProvidersController(providersService),
       requirementsController: new RequirementsController(requirementsService),
-      iterationPlansController: new IterationPlansController(iterationPlansService)
+      iterationPlansController: new IterationPlansController(iterationPlansService),
+      agentsController: new AgentsController(agentsService)
     };
   }
 
@@ -158,5 +162,64 @@ describe('API foundation', () => {
     const confirmedPlans = plans.filter((plan) => plan.status === 'confirmed');
     expect(confirmedPlans).toHaveLength(1);
     expect(confirmedPlans[0].id).toBe(second.id);
+  });
+
+  it('returns built-in agent templates', () => {
+    const { agentsController } = createControllers();
+
+    const templates = agentsController.listTemplates();
+
+    expect(templates).toHaveLength(5);
+    expect(templates[0].role).toBe('product_manager');
+  });
+
+  it('creates, updates, and deletes an agent instance', () => {
+    const { agentsController, providersController } = createControllers();
+
+    providersController.create({
+      name: 'Primary Codex',
+      providerType: 'codex',
+      workspaceId: 'ws_1',
+      endpoint: 'https://api.example.com',
+      model: 'gpt-5',
+      apiKey: 'secret'
+    });
+
+    const agent = agentsController.create({
+      templateId: 'template_developer',
+      name: 'Developer Agent Alpha',
+      providerId: 'provider_1',
+      systemPrompt: 'Implement approved work.',
+      taskTypes: ['implementation', 'api_design'],
+      isEnabled: true
+    });
+
+    expect(agent.name).toBe('Developer Agent Alpha');
+    expect(agent.taskTypes).toContain('implementation');
+
+    const updated = agentsController.update(agent.id, {
+      name: 'Developer Agent Beta',
+      isEnabled: false,
+      taskTypes: ['implementation']
+    });
+
+    expect(updated.name).toBe('Developer Agent Beta');
+    expect(updated.isEnabled).toBe(false);
+
+    const removed = agentsController.remove(agent.id);
+    expect(removed.id).toBe(agent.id);
+    expect(agentsController.listInstances()).toHaveLength(0);
+  });
+
+  it('rejects agent creation with invalid provider', () => {
+    const { agentsController } = createControllers();
+
+    expect(() =>
+      agentsController.create({
+        templateId: 'template_tester',
+        name: 'Broken Agent',
+        providerId: 'missing_provider'
+      })
+    ).toThrowError('provider not found');
   });
 });
