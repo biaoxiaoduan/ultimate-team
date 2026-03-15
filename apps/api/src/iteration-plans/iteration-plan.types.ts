@@ -1,9 +1,6 @@
-export type WorkPackageRole =
-  | 'product_manager'
-  | 'designer'
-  | 'developer'
-  | 'tester'
-  | 'release_manager';
+import { AgentRole } from '../agents/agent.types';
+
+export type WorkPackageRole = AgentRole;
 
 export type WorkPackage = {
   id: string;

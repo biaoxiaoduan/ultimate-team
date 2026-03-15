@@ -1,4 +1,12 @@
-import { AgentInstance, AgentTemplate, IterationPlan, ProviderConfig, Requirement, Workspace } from './types';
+import {
+  AgentInstance,
+  AgentTemplate,
+  IterationPlan,
+  OrchestrationRun,
+  ProviderConfig,
+  Requirement,
+  Workspace
+} from './types';
 
 export const defaultWorkspaces: Workspace[] = [
   {
@@ -81,3 +89,5 @@ export const defaultAgentTemplates: AgentTemplate[] = [
 ];
 
 export const defaultAgentInstances: AgentInstance[] = [];
+
+export const defaultRuns: OrchestrationRun[] = [];

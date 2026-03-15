@@ -7,6 +7,7 @@ import { ProvidersService } from './providers.service';
 @Module({
   imports: [WorkspacesModule],
   controllers: [ProvidersController],
-  providers: [ProvidersService]
+  providers: [ProvidersService],
+  exports: [ProvidersService]
 })
 export class ProvidersModule {}
