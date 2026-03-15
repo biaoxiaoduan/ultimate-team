@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
+import { DatabaseService } from '../database/database.service';
 import { ProvidersService } from '../providers/providers.service';
 import { AgentInstance, AgentTemplate, CreateAgentInput, UpdateAgentInput } from './agent.types';
 
@@ -48,20 +49,30 @@ export class AgentsService {
     }
   ];
 
-  private readonly agents: AgentInstance[] = [];
-
-  constructor(private readonly providersService: ProvidersService) {}
+  constructor(
+    private readonly providersService: ProvidersService,
+    private readonly databaseService: DatabaseService
+  ) {}
 
   listTemplates() {
     return this.templates;
   }
 
   listInstances() {
-    return this.agents;
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, template_id, name, provider_id, system_prompt, task_types_json, is_enabled, created_at, updated_at
+          FROM agent_instances
+          ORDER BY pk ASC
+        `
+      )
+      .all()
+      .map(mapAgentRow);
   }
 
   findEnabledByRole(role: AgentTemplate['role']) {
-    return this.agents.find((agent) => {
+    return this.listInstances().find((agent) => {
       if (!agent.isEnabled) {
         return false;
       }
@@ -88,27 +99,34 @@ export class AgentsService {
     ensureProviderExists(this.providersService, input.providerId);
 
     const now = new Date().toISOString();
-    const agent: AgentInstance = {
-      id: `agent_${this.agents.length + 1}`,
-      templateId: template.id,
-      name: input.name.trim(),
-      providerId: input.providerId,
-      systemPrompt: input.systemPrompt?.trim() || template.defaultPrompt,
-      taskTypes: normalizeTaskTypes(input.taskTypes, template.defaultTaskTypes),
-      isEnabled: input.isEnabled ?? true,
-      createdAt: now,
-      updatedAt: now
-    };
-
-    this.agents.push(agent);
-    return agent;
+    const result = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO agent_instances (
+            template_id, name, provider_id, system_prompt, task_types_json, is_enabled, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        template.id,
+        input.name.trim(),
+        input.providerId,
+        input.systemPrompt?.trim() || template.defaultPrompt,
+        JSON.stringify(normalizeTaskTypes(input.taskTypes, template.defaultTaskTypes)),
+        input.isEnabled ?? true ? 1 : 0,
+        now,
+        now
+      );
+    const id = `agent_${result.lastInsertRowid}`;
+    this.databaseService.connection
+      .prepare('UPDATE agent_instances SET id = ? WHERE pk = ?')
+      .run(id, result.lastInsertRowid);
+    return this.getById(id);
   }
 
   update(id: string, input: UpdateAgentInput) {
-    const agent = this.agents.find((item) => item.id === id);
-    if (!agent) {
-      throw new NotFoundException('agent not found');
-    }
+    const agent = this.getById(id);
 
     if (input.templateId !== undefined) {
       const template = this.templates.find((item) => item.id === input.templateId);
@@ -143,17 +161,48 @@ export class AgentsService {
     }
 
     agent.updatedAt = new Date().toISOString();
-    return agent;
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE agent_instances
+          SET template_id = ?, name = ?, provider_id = ?, system_prompt = ?, task_types_json = ?, is_enabled = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        agent.templateId,
+        agent.name,
+        agent.providerId,
+        agent.systemPrompt,
+        JSON.stringify(agent.taskTypes),
+        agent.isEnabled ? 1 : 0,
+        agent.updatedAt,
+        id
+      );
+    return this.getById(id);
   }
 
   remove(id: string) {
-    const index = this.agents.findIndex((item) => item.id === id);
-    if (index === -1) {
+    const removed = this.getById(id);
+    this.databaseService.connection.prepare('DELETE FROM agent_instances WHERE id = ?').run(id);
+    return removed;
+  }
+
+  private getById(id: string) {
+    const agent = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, template_id, name, provider_id, system_prompt, task_types_json, is_enabled, created_at, updated_at
+          FROM agent_instances
+          WHERE id = ?
+        `
+      )
+      .get(id);
+    if (!agent) {
       throw new NotFoundException('agent not found');
     }
 
-    const [removed] = this.agents.splice(index, 1);
-    return removed;
+    return mapAgentRow(agent);
   }
 }
 
@@ -166,8 +215,23 @@ function normalizeTaskTypes(taskTypes: string[] | undefined, fallback: string[])
 }
 
 function ensureProviderExists(providersService: ProvidersService, providerId: string) {
-  const provider = providersService.list().find((item) => item.id === providerId);
-  if (!provider) {
+  try {
+    providersService.getById(providerId);
+  } catch {
     throw new BadRequestException('provider not found');
   }
+}
+
+function mapAgentRow(row: Record<string, unknown>): AgentInstance {
+  return {
+    id: String(row.id),
+    templateId: String(row.template_id),
+    name: String(row.name),
+    providerId: String(row.provider_id),
+    systemPrompt: String(row.system_prompt),
+    taskTypes: JSON.parse(String(row.task_types_json)) as string[],
+    isEnabled: Boolean(row.is_enabled),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
 }

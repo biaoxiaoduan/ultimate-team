@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { AgentsService } from '../agents/agents.service';
+import { DatabaseService } from '../database/database.service';
 import { IterationPlansService } from '../iteration-plans/iteration-plans.service';
 import { PlanIteration, WorkPackage } from '../iteration-plans/iteration-plan.types';
 import {
@@ -14,24 +15,44 @@ import {
 
 @Injectable()
 export class OrchestrationRunsService {
-  private readonly runs: OrchestrationRun[] = [];
-
   constructor(
     private readonly iterationPlansService: IterationPlansService,
-    private readonly agentsService: AgentsService
+    private readonly agentsService: AgentsService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   list() {
-    return this.runs;
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            id, plan_id, requirement_id, iteration_id, iteration_title, status, current_stage_id, last_error,
+            stages_json, tasks_json, handoffs_json, started_at, completed_at, created_at, updated_at
+          FROM orchestration_runs
+          ORDER BY pk DESC
+        `
+      )
+      .all()
+      .map(mapRunRow);
   }
 
   getById(id: string) {
-    const run = this.runs.find((item) => item.id === id);
+    const run = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            id, plan_id, requirement_id, iteration_id, iteration_title, status, current_stage_id, last_error,
+            stages_json, tasks_json, handoffs_json, started_at, completed_at, created_at, updated_at
+          FROM orchestration_runs
+          WHERE id = ?
+        `
+      )
+      .get(id);
     if (!run) {
       throw new NotFoundException('orchestration run not found');
     }
 
-    return run;
+    return mapRunRow(run);
   }
 
   create(input: CreateOrchestrationRunInput) {
@@ -54,7 +75,31 @@ export class OrchestrationRunsService {
     }
 
     const now = new Date().toISOString();
-    const runId = `run_${this.runs.length + 1}`;
+    const insertResult = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO orchestration_runs (
+            plan_id, requirement_id, iteration_id, iteration_title, status, current_stage_id, last_error,
+            stages_json, tasks_json, handoffs_json, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        plan.id,
+        plan.requirementId,
+        iteration.id,
+        iteration.title,
+        'draft',
+        '',
+        null,
+        '[]',
+        '[]',
+        '[]',
+        now,
+        now
+      );
+    const runId = `run_${insertResult.lastInsertRowid}`;
     const stages = iteration.workPackages.map((workPackage, index) =>
       this.createStage(runId, workPackage, iteration, index)
     );
@@ -75,8 +120,23 @@ export class OrchestrationRunsService {
       updatedAt: now
     };
 
-    this.runs.unshift(run);
-    return run;
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE orchestration_runs
+          SET id = ?, current_stage_id = ?, stages_json = ?, tasks_json = ?, handoffs_json = ?
+          WHERE pk = ?
+        `
+      )
+      .run(
+        runId,
+        run.currentStageId,
+        JSON.stringify(run.stages),
+        JSON.stringify(run.tasks),
+        JSON.stringify(run.handoffs),
+        insertResult.lastInsertRowid
+      );
+    return this.getById(runId);
   }
 
   start(id: string) {
@@ -96,7 +156,8 @@ export class OrchestrationRunsService {
     run.status = 'running';
     run.startedAt = now;
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(id);
   }
 
   executeStage(runId: string, stageId: string) {
@@ -121,7 +182,8 @@ export class OrchestrationRunsService {
     }
 
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(runId);
   }
 
   confirmStage(runId: string, stageId: string) {
@@ -148,7 +210,8 @@ export class OrchestrationRunsService {
     }
 
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(runId);
   }
 
   failStage(runId: string, stageId: string, input: FailRunStageInput) {
@@ -170,7 +233,8 @@ export class OrchestrationRunsService {
     run.status = 'failed';
     run.lastError = stage.failureReason;
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(runId);
   }
 
   retryStage(runId: string, stageId: string) {
@@ -188,7 +252,8 @@ export class OrchestrationRunsService {
     run.status = 'running';
     run.lastError = null;
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(runId);
   }
 
   pause(id: string) {
@@ -198,7 +263,8 @@ export class OrchestrationRunsService {
     const now = new Date().toISOString();
     run.status = 'paused';
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(id);
   }
 
   resume(id: string) {
@@ -208,7 +274,8 @@ export class OrchestrationRunsService {
     const now = new Date().toISOString();
     run.status = 'running';
     touchRun(run, now);
-    return run;
+    this.saveRun(run);
+    return this.getById(id);
   }
 
   private createStage(runId: string, workPackage: WorkPackage, iteration: PlanIteration, index: number): RunStage {
@@ -228,6 +295,50 @@ export class OrchestrationRunsService {
       sequence: index + 1
     };
   }
+
+  private saveRun(run: OrchestrationRun) {
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE orchestration_runs
+          SET status = ?, current_stage_id = ?, last_error = ?, stages_json = ?, tasks_json = ?, handoffs_json = ?,
+              started_at = ?, completed_at = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        run.status,
+        run.currentStageId,
+        run.lastError,
+        JSON.stringify(run.stages),
+        JSON.stringify(run.tasks),
+        JSON.stringify(run.handoffs),
+        run.startedAt ?? null,
+        run.completedAt ?? null,
+        run.updatedAt,
+        run.id
+      );
+  }
+}
+
+function mapRunRow(row: Record<string, unknown>): OrchestrationRun {
+  return {
+    id: String(row.id),
+    planId: String(row.plan_id),
+    requirementId: String(row.requirement_id),
+    iterationId: String(row.iteration_id),
+    iterationTitle: String(row.iteration_title),
+    status: row.status as OrchestrationRun['status'],
+    currentStageId: row.current_stage_id ? String(row.current_stage_id) : null,
+    lastError: row.last_error ? String(row.last_error) : null,
+    stages: JSON.parse(String(row.stages_json)) as RunStage[],
+    tasks: JSON.parse(String(row.tasks_json)) as AgentTask[],
+    handoffs: JSON.parse(String(row.handoffs_json)) as Handoff[],
+    startedAt: row.started_at ? String(row.started_at) : undefined,
+    completedAt: row.completed_at ? String(row.completed_at) : undefined,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
 }
 
 function ensureRunStatus(run: OrchestrationRun, allowed: OrchestrationRun['status'][]) {

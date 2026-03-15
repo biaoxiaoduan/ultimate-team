@@ -690,7 +690,12 @@ MVP 功能：
 
 ## 13. 数据模型建议
 
-建议首版使用 PostgreSQL 作为主数据库，核心实体如下：
+建议首版采用双层策略：
+
+- 本地单用户 MVP：SQLite 文件数据库，优先解决真实持久化和零门槛启动
+- 生产或多用户阶段：迁移到 PostgreSQL，承接更强并发、审计和集成需求
+
+核心实体如下：
 
 - User
 - Project
@@ -726,10 +731,19 @@ MVP 功能：
 
 ### 13.2 数据库设计原则
 
-- 主实体字段稳定，扩展字段使用 JSONB。
+- 主实体字段稳定，扩展字段使用 JSON 列。
 - 所有执行相关对象保留状态机字段。
 - 所有重要实体保留 `created_by`、`updated_at`、`version`。
 - 所有 Run 和 Agent 执行都必须保留原始输入摘要和输出摘要。
+
+### 13.3 MVP 持久化策略
+
+MVP 当前优先解决“重启不丢数据”和“本地可直接运行”，因此采用：
+
+- 需求、计划、Provider、Agent、Run 等核心数据落 SQLite
+- 交付物可先由 Run 数据派生生成，保证可追溯
+- 表结构与领域模型保持一致，后续可迁移到 PostgreSQL
+- 迁移机制由后端启动时自动执行
 
 ## 14. API 边界建议
 
@@ -760,7 +774,7 @@ MVP 功能：
 
 - 前端：React + TypeScript + Vite
 - 后端：Node.js + NestJS
-- 数据库：PostgreSQL
+- 数据库：SQLite（本地 MVP） / PostgreSQL（生产目标）
 - 队列 / 异步任务：Redis + BullMQ
 - 文档存储：本地文件系统抽象层，后续可切对象存储
 - 执行器适配：Provider Adapter Layer
@@ -772,7 +786,7 @@ MVP 推荐如下实现：
 
 - Orchestrator：NestJS 内部编排服务
 - Event Bus：BullMQ 事件或 Redis Streams
-- State Store：PostgreSQL
+- State Store：SQLite（本地） / PostgreSQL（扩展阶段）
 - Artifact Store：数据库元数据 + 本地文件落盘
 
 原因：
@@ -850,7 +864,15 @@ V2 再考虑：
 - Git 提交记录关联
 - 交付物详情页和日志查看交互
 
-#### 阶段 F：MVP 收口
+#### 阶段 F：数据库接入与核心模型持久化
+
+- SQLite 持久化接入
+- 启动迁移机制
+- Workspace / Provider / Requirement / Plan / Agent / Run 落库
+- 本地重启后的数据恢复验证
+- 为后续 PostgreSQL 迁移预留边界
+
+#### 阶段 G：MVP 收口
 
 - 全链路联调
 - 失败重试
