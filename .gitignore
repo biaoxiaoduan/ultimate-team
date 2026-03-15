@@ -45,3 +45,6 @@ test-results/
 # Runtime
 tmp/
 temp/
+*.db
+*.db-shm
+*.db-wal

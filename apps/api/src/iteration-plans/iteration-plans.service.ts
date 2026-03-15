@@ -1,59 +1,116 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
+import { DatabaseService } from '../database/database.service';
 import { RequirementsService } from '../requirements/requirements.service';
 import { IterationPlan, PlanIteration, WorkPackage, WorkPackageRole } from './iteration-plan.types';
 
 @Injectable()
 export class IterationPlansService {
-  private readonly plans: IterationPlan[] = [];
-
-  constructor(private readonly requirementsService: RequirementsService) {}
+  constructor(
+    private readonly requirementsService: RequirementsService,
+    private readonly databaseService: DatabaseService
+  ) {}
 
   list() {
-    return this.plans;
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, requirement_id, source_version_id, status, title, summary, iterations_json, created_at, updated_at
+          FROM iteration_plans
+          ORDER BY pk DESC
+        `
+      )
+      .all()
+      .map(mapIterationPlanRow);
   }
 
   getById(id: string) {
-    const plan = this.plans.find((item) => item.id === id);
+    const plan = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, requirement_id, source_version_id, status, title, summary, iterations_json, created_at, updated_at
+          FROM iteration_plans
+          WHERE id = ?
+        `
+      )
+      .get(id);
     if (!plan) {
       throw new NotFoundException('iteration plan not found');
     }
 
-    return plan;
+    return mapIterationPlanRow(plan);
   }
 
   generateDraft(requirementId: string) {
     const requirement = this.requirementsService.getById(requirementId);
     const now = new Date().toISOString();
-    const plan: IterationPlan = {
-      id: `plan_${this.plans.length + 1}`,
-      requirementId: requirement.id,
-      sourceVersionId: requirement.currentVersionId,
-      status: 'draft',
-      title: `${requirement.title} delivery plan`,
-      summary: buildSummary(requirement),
-      iterations: buildIterations(requirement),
-      createdAt: now,
-      updatedAt: now
-    };
-
-    this.plans.push(plan);
-    return plan;
+    const iterations = buildIterations(requirement);
+    const result = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO iteration_plans (
+            requirement_id, source_version_id, status, title, summary, iterations_json, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        requirement.id,
+        requirement.currentVersionId,
+        'draft',
+        `${requirement.title} delivery plan`,
+        buildSummary(requirement),
+        JSON.stringify(iterations),
+        now,
+        now
+      );
+    const id = `plan_${result.lastInsertRowid}`;
+    this.databaseService.connection
+      .prepare('UPDATE iteration_plans SET id = ? WHERE pk = ?')
+      .run(id, result.lastInsertRowid);
+    return this.getById(id);
   }
 
   confirm(id: string) {
     const target = this.getById(id);
+    const now = new Date().toISOString();
 
-    this.plans.forEach((plan) => {
-      if (plan.requirementId === target.requirementId) {
-        plan.status = plan.id === target.id ? 'confirmed' : 'draft';
-        plan.updatedAt = new Date().toISOString();
-      }
-    });
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE iteration_plans
+          SET status = 'draft', updated_at = ?
+          WHERE requirement_id = ?
+        `
+      )
+      .run(now, target.requirementId);
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE iteration_plans
+          SET status = 'confirmed', updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(now, target.id);
 
     this.requirementsService.markPlanned(target.requirementId);
-    return target;
+    return this.getById(id);
   }
+}
+
+function mapIterationPlanRow(row: Record<string, unknown>): IterationPlan {
+  return {
+    id: String(row.id),
+    requirementId: String(row.requirement_id),
+    sourceVersionId: String(row.source_version_id),
+    status: row.status as IterationPlan['status'],
+    title: String(row.title),
+    summary: String(row.summary),
+    iterations: JSON.parse(String(row.iterations_json)) as PlanIteration[],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
 }
 
 function buildSummary(requirement: {

@@ -1,16 +1,45 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
+import { DatabaseService } from '../database/database.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateProviderInput, ProviderConfig, UpdateProviderInput } from './provider.types';
 
 @Injectable()
 export class ProvidersService {
-  private readonly providers: ProviderConfig[] = [];
-
-  constructor(private readonly workspacesService: WorkspacesService) {}
+  constructor(
+    private readonly workspacesService: WorkspacesService,
+    private readonly databaseService: DatabaseService
+  ) {}
 
   list() {
-    return this.providers;
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, name, provider_type, endpoint, model, api_key_masked, is_enabled, workspace_id, created_at, updated_at
+          FROM providers
+          ORDER BY pk ASC
+        `
+      )
+      .all()
+      .map(mapProviderRow);
+  }
+
+  getById(id: string) {
+    const provider = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, name, provider_type, endpoint, model, api_key_masked, is_enabled, workspace_id, created_at, updated_at
+          FROM providers
+          WHERE id = ?
+        `
+      )
+      .get(id);
+
+    if (!provider) {
+      throw new NotFoundException('provider not found');
+    }
+
+    return mapProviderRow(provider);
   }
 
   create(input: CreateProviderInput) {
@@ -26,33 +55,35 @@ export class ProvidersService {
       throw new BadRequestException('workspaceId is required');
     }
 
-    const workspace = this.workspacesService.list().find((item) => item.id === input.workspaceId);
-    if (!workspace) {
-      throw new BadRequestException('workspaceId is invalid');
-    }
-
-    const provider: ProviderConfig = {
-      id: `provider_${this.providers.length + 1}`,
-      name: input.name.trim(),
-      providerType: input.providerType,
-      endpoint: input.endpoint?.trim() ?? '',
-      model: input.model?.trim() ?? '',
-      apiKeyMasked: maskApiKey(input.apiKey),
-      isEnabled: input.isEnabled ?? true,
-      workspaceId: workspace.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    this.providers.push(provider);
-    return provider;
+    const workspace = this.workspacesService.getById(input.workspaceId);
+    const now = new Date().toISOString();
+    const result = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO providers (
+            name, provider_type, endpoint, model, api_key_masked, is_enabled, workspace_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        input.name.trim(),
+        input.providerType,
+        input.endpoint?.trim() ?? '',
+        input.model?.trim() ?? '',
+        maskApiKey(input.apiKey),
+        input.isEnabled ?? true ? 1 : 0,
+        workspace.id,
+        now,
+        now
+      );
+    const id = `provider_${result.lastInsertRowid}`;
+    this.databaseService.connection.prepare('UPDATE providers SET id = ? WHERE pk = ?').run(id, result.lastInsertRowid);
+    return this.getById(id);
   }
 
   update(id: string, input: UpdateProviderInput) {
-    const provider = this.providers.find((item) => item.id === id);
-    if (!provider) {
-      throw new NotFoundException('provider not found');
-    }
+    const provider = this.getById(id);
 
     if (input.name !== undefined) {
       if (!input.name.trim()) {
@@ -82,7 +113,25 @@ export class ProvidersService {
     }
 
     provider.updatedAt = new Date().toISOString();
-    return provider;
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE providers
+          SET name = ?, provider_type = ?, endpoint = ?, model = ?, api_key_masked = ?, is_enabled = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        provider.name,
+        provider.providerType,
+        provider.endpoint,
+        provider.model,
+        provider.apiKeyMasked,
+        provider.isEnabled ? 1 : 0,
+        provider.updatedAt,
+        id
+      );
+    return this.getById(id);
   }
 }
 
@@ -97,4 +146,19 @@ function maskApiKey(apiKey?: string) {
   }
 
   return `${normalized.slice(0, 2)}****${normalized.slice(-2)}`;
+}
+
+function mapProviderRow(row: Record<string, unknown>): ProviderConfig {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    providerType: row.provider_type as ProviderConfig['providerType'],
+    endpoint: String(row.endpoint),
+    model: String(row.model),
+    apiKeyMasked: String(row.api_key_masked),
+    isEnabled: Boolean(row.is_enabled),
+    workspaceId: String(row.workspace_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
 }

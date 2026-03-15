@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
+import { DatabaseService } from '../database/database.service';
 import {
   CreateRequirementInput,
   CreateRequirementVersionInput,
@@ -10,20 +11,62 @@ import {
 
 @Injectable()
 export class RequirementsService {
-  private readonly requirements: Requirement[] = [];
-  private readonly versions: RequirementVersion[] = [];
+  constructor(private readonly databaseService: DatabaseService) {}
 
   list() {
-    return this.requirements;
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            id,
+            project_id,
+            title,
+            summary,
+            goal,
+            constraints,
+            acceptance_criteria,
+            current_version_id,
+            current_version_number,
+            current_content,
+            status,
+            created_at,
+            updated_at
+          FROM requirements
+          ORDER BY pk DESC
+        `
+      )
+      .all()
+      .map(mapRequirementRow);
   }
 
   getById(id: string) {
-    const requirement = this.requirements.find((item) => item.id === id);
+    const requirement = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            id,
+            project_id,
+            title,
+            summary,
+            goal,
+            constraints,
+            acceptance_criteria,
+            current_version_id,
+            current_version_number,
+            current_content,
+            status,
+            created_at,
+            updated_at
+          FROM requirements
+          WHERE id = ?
+        `
+      )
+      .get(id);
     if (!requirement) {
       throw new NotFoundException('requirement not found');
     }
 
-    return requirement;
+    return mapRequirementRow(requirement);
   }
 
   create(input: CreateRequirementInput) {
@@ -35,37 +78,57 @@ export class RequirementsService {
       throw new BadRequestException('content is required');
     }
 
-    const requirementId = `req_${this.requirements.length + 1}`;
-    const versionId = `req_ver_${this.versions.length + 1}`;
     const now = new Date().toISOString();
+    const requirementResult = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO requirements (
+            project_id, title, summary, goal, constraints, acceptance_criteria, current_version_id,
+            current_version_number, current_content, status, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, '', 0, '', ?, ?, ?)
+        `
+      )
+      .run(
+        input.projectId?.trim() || 'project_demo',
+        input.title.trim(),
+        input.summary?.trim() ?? '',
+        input.goal?.trim() ?? '',
+        input.constraints?.trim() ?? '',
+        input.acceptanceCriteria?.trim() ?? '',
+        'draft',
+        now,
+        now
+      );
+    const requirementId = `req_${requirementResult.lastInsertRowid}`;
+    this.databaseService.connection
+      .prepare('UPDATE requirements SET id = ? WHERE pk = ?')
+      .run(requirementId, requirementResult.lastInsertRowid);
 
-    const version: RequirementVersion = {
-      id: versionId,
-      requirementId,
-      version: 1,
-      content: input.content.trim(),
-      createdAt: now
-    };
+    const versionResult = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO requirement_versions (requirement_id, version, content, created_at)
+          VALUES (?, ?, ?, ?)
+        `
+      )
+      .run(requirementId, 1, input.content.trim(), now);
+    const versionId = `req_ver_${versionResult.lastInsertRowid}`;
+    this.databaseService.connection
+      .prepare('UPDATE requirement_versions SET id = ? WHERE pk = ?')
+      .run(versionId, versionResult.lastInsertRowid);
 
-    const requirement: Requirement = {
-      id: requirementId,
-      projectId: input.projectId?.trim() || 'project_demo',
-      title: input.title.trim(),
-      summary: input.summary?.trim() ?? '',
-      goal: input.goal?.trim() ?? '',
-      constraints: input.constraints?.trim() ?? '',
-      acceptanceCriteria: input.acceptanceCriteria?.trim() ?? '',
-      currentVersionId: versionId,
-      currentVersionNumber: 1,
-      currentContent: version.content,
-      status: 'draft',
-      createdAt: now,
-      updatedAt: now
-    };
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE requirements
+          SET current_version_id = ?, current_version_number = ?, current_content = ?
+          WHERE id = ?
+        `
+      )
+      .run(versionId, 1, input.content.trim(), requirementId);
 
-    this.versions.push(version);
-    this.requirements.push(requirement);
-    return requirement;
+    return this.getById(requirementId);
   }
 
   update(id: string, input: UpdateRequirementInput) {
@@ -99,14 +162,40 @@ export class RequirementsService {
     }
 
     requirement.updatedAt = new Date().toISOString();
-    return requirement;
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE requirements
+          SET project_id = ?, title = ?, summary = ?, goal = ?, constraints = ?, acceptance_criteria = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        requirement.projectId,
+        requirement.title,
+        requirement.summary,
+        requirement.goal,
+        requirement.constraints,
+        requirement.acceptanceCriteria,
+        requirement.updatedAt,
+        id
+      );
+    return this.getById(id);
   }
 
   listVersions(requirementId: string) {
     this.getById(requirementId);
-    return this.versions
-      .filter((version) => version.requirementId === requirementId)
-      .sort((left, right) => left.version - right.version);
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, requirement_id, version, content, created_at
+          FROM requirement_versions
+          WHERE requirement_id = ?
+          ORDER BY version ASC
+        `
+      )
+      .all(requirementId)
+      .map(mapRequirementVersionRow);
   }
 
   addVersion(requirementId: string, input: CreateRequirementVersionInput) {
@@ -118,27 +207,67 @@ export class RequirementsService {
 
     const currentVersions = this.listVersions(requirementId);
     const nextVersionNumber = currentVersions.length + 1;
-    const version: RequirementVersion = {
-      id: `req_ver_${this.versions.length + 1}`,
-      requirementId,
-      version: nextVersionNumber,
-      content: input.content.trim(),
-      createdAt: new Date().toISOString()
-    };
+    const now = new Date().toISOString();
+    const versionResult = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO requirement_versions (requirement_id, version, content, created_at)
+          VALUES (?, ?, ?, ?)
+        `
+      )
+      .run(requirementId, nextVersionNumber, input.content.trim(), now);
+    const versionId = `req_ver_${versionResult.lastInsertRowid}`;
+    this.databaseService.connection
+      .prepare('UPDATE requirement_versions SET id = ? WHERE pk = ?')
+      .run(versionId, versionResult.lastInsertRowid);
 
-    this.versions.push(version);
-    requirement.currentVersionId = version.id;
-    requirement.currentVersionNumber = version.version;
-    requirement.currentContent = version.content;
-    requirement.updatedAt = new Date().toISOString();
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE requirements
+          SET current_version_id = ?, current_version_number = ?, current_content = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(versionId, nextVersionNumber, input.content.trim(), now, requirement.id);
 
-    return version;
+    return this.listVersions(requirementId).at(-1) as RequirementVersion;
   }
 
   markPlanned(requirementId: string) {
-    const requirement = this.getById(requirementId);
-    requirement.status = 'planned';
-    requirement.updatedAt = new Date().toISOString();
-    return requirement;
+    this.getById(requirementId);
+    const now = new Date().toISOString();
+    this.databaseService.connection
+      .prepare('UPDATE requirements SET status = ?, updated_at = ? WHERE id = ?')
+      .run('planned', now, requirementId);
+    return this.getById(requirementId);
   }
+}
+
+function mapRequirementRow(row: Record<string, unknown>): Requirement {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    title: String(row.title),
+    summary: String(row.summary),
+    goal: String(row.goal),
+    constraints: String(row.constraints),
+    acceptanceCriteria: String(row.acceptance_criteria),
+    currentVersionId: String(row.current_version_id),
+    currentVersionNumber: Number(row.current_version_number),
+    currentContent: String(row.current_content),
+    status: row.status as Requirement['status'],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapRequirementVersionRow(row: Record<string, unknown>): RequirementVersion {
+  return {
+    id: String(row.id),
+    requirementId: String(row.requirement_id),
+    version: Number(row.version),
+    content: String(row.content),
+    createdAt: String(row.created_at)
+  };
 }

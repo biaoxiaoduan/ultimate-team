@@ -1,10 +1,13 @@
 import {
   AgentInstance,
   AgentTemplate,
+  Artifact,
+  BuildRecord,
   IterationPlan,
   OrchestrationRun,
   ProviderConfig,
   Requirement,
+  TestReport,
   Workspace
 } from './types';
 
@@ -91,3 +94,9 @@ export const defaultAgentTemplates: AgentTemplate[] = [
 export const defaultAgentInstances: AgentInstance[] = [];
 
 export const defaultRuns: OrchestrationRun[] = [];
+
+export const defaultArtifacts: Artifact[] = [];
+
+export const defaultTestReports: TestReport[] = [];
+
+export const defaultBuildRecords: BuildRecord[] = [];

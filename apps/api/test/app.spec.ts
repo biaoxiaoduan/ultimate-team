@@ -1,7 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 
+import { ArtifactsController } from '../src/artifacts/artifacts.controller';
+import { ArtifactsService } from '../src/artifacts/artifacts.service';
 import { AgentsController } from '../src/agents/agents.controller';
 import { AgentsService } from '../src/agents/agents.service';
+import { DatabaseService } from '../src/database/database.service';
 import { HealthController } from '../src/health/health.controller';
 import { IterationPlansController } from '../src/iteration-plans/iteration-plans.controller';
 import { IterationPlansService } from '../src/iteration-plans/iteration-plans.service';
@@ -15,21 +21,29 @@ import { WorkspacesController } from '../src/workspaces/workspaces.controller';
 import { WorkspacesService } from '../src/workspaces/workspaces.service';
 
 describe('API foundation', () => {
-  function createControllers() {
-    const workspacesService = new WorkspacesService();
-    const providersService = new ProvidersService(workspacesService);
-    const requirementsService = new RequirementsService();
-    const iterationPlansService = new IterationPlansService(requirementsService);
-    const agentsService = new AgentsService(providersService);
-    const orchestrationRunsService = new OrchestrationRunsService(iterationPlansService, agentsService);
+  function createControllers(dbPath = ':memory:') {
+    const databaseService = new DatabaseService(dbPath);
+    const workspacesService = new WorkspacesService(databaseService);
+    const providersService = new ProvidersService(workspacesService, databaseService);
+    const requirementsService = new RequirementsService(databaseService);
+    const iterationPlansService = new IterationPlansService(requirementsService, databaseService);
+    const agentsService = new AgentsService(providersService, databaseService);
+    const orchestrationRunsService = new OrchestrationRunsService(
+      iterationPlansService,
+      agentsService,
+      databaseService
+    );
+    const artifactsService = new ArtifactsService(orchestrationRunsService);
     return {
+      databaseService,
       healthController: new HealthController(),
       workspacesController: new WorkspacesController(workspacesService),
       providersController: new ProvidersController(providersService),
       requirementsController: new RequirementsController(requirementsService),
       iterationPlansController: new IterationPlansController(iterationPlansService),
       agentsController: new AgentsController(agentsService),
-      orchestrationRunsController: new OrchestrationRunsController(orchestrationRunsService)
+      orchestrationRunsController: new OrchestrationRunsController(orchestrationRunsService),
+      artifactsController: new ArtifactsController(artifactsService)
     };
   }
 
@@ -347,6 +361,81 @@ describe('API foundation', () => {
       })
     ).toThrowError('designer agent is required');
   });
+
+  it('generates artifacts, test reports, and build records from completed run stages', () => {
+    const {
+      agentsController,
+      artifactsController,
+      iterationPlansController,
+      orchestrationRunsController,
+      providersController,
+      requirementsController
+    } = createControllers();
+
+    seedAgents(agentsController, providersController);
+    const plan = createConfirmedPlan(requirementsController, iterationPlansController);
+    const run = orchestrationRunsController.create({
+      planId: plan.id,
+      iterationId: plan.iterations[0].id
+    });
+
+    completeRun(run.id, orchestrationRunsController);
+
+    const artifacts = artifactsController.list();
+    expect(artifacts.length).toBeGreaterThanOrEqual(7);
+    expect(artifacts.some((artifact) => artifact.category === 'development_doc')).toBe(true);
+    expect(artifacts.some((artifact) => artifact.category === 'test_report_doc')).toBe(true);
+
+    const runArtifacts = artifactsController.listByRun(run.id);
+    expect(runArtifacts.every((artifact) => artifact.runId === run.id)).toBe(true);
+
+    const iterationArtifacts = artifactsController.listByIteration(plan.iterations[0].id);
+    expect(iterationArtifacts.length).toBe(runArtifacts.length);
+
+    const artifactDetail = artifactsController.getById(runArtifacts[0].id);
+    expect(artifactDetail.id).toBe(runArtifacts[0].id);
+
+    const testReports = artifactsController.listTestReports(run.id);
+    expect(testReports).toHaveLength(1);
+    expect(testReports[0].status).toBe('passed');
+
+    const buildRecords = artifactsController.listBuildRecords(run.id);
+    expect(buildRecords).toHaveLength(1);
+    expect(buildRecords[0].status).toBe('ready');
+  });
+
+  it('persists requirements and providers across service recreation when using a file database', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'ultimate-team-db-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      const first = createControllers(dbPath);
+      const provider = first.providersController.create({
+        name: 'Persistent Codex',
+        providerType: 'codex',
+        workspaceId: 'ws_1',
+        endpoint: 'https://api.example.com',
+        model: 'gpt-5',
+        apiKey: 'secret'
+      });
+      const requirement = first.requirementsController.create({
+        title: 'Persistent requirement',
+        content: 'Stored in sqlite'
+      });
+
+      first.databaseService.onModuleDestroy();
+
+      const second = createControllers(dbPath);
+      expect(second.providersController.list()).toHaveLength(1);
+      expect(second.providersController.list()[0].id).toBe(provider.id);
+      expect(second.requirementsController.list()).toHaveLength(1);
+      expect(second.requirementsController.list()[0].id).toBe(requirement.id);
+
+      second.databaseService.onModuleDestroy();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function seedAgents(agentsController: AgentsController, providersController: ProvidersController) {
@@ -406,4 +495,20 @@ function createConfirmedPlan(
 
   const plan = iterationPlansController.generate(requirement.id);
   return iterationPlansController.confirm(plan.id);
+}
+
+function completeRun(runId: string, orchestrationRunsController: OrchestrationRunsController) {
+  let run = orchestrationRunsController.start(runId);
+
+  while (run.currentStageId) {
+    const stage = run.stages.find((item) => item.id === run.currentStageId);
+    if (!stage) {
+      throw new Error('stage not found during completion');
+    }
+
+    run = orchestrationRunsController.executeStage(run.id, stage.id);
+    run = orchestrationRunsController.confirmStage(run.id, stage.id);
+  }
+
+  return run;
 }
