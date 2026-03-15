@@ -5,6 +5,8 @@ import { AgentsService } from '../src/agents/agents.service';
 import { HealthController } from '../src/health/health.controller';
 import { IterationPlansController } from '../src/iteration-plans/iteration-plans.controller';
 import { IterationPlansService } from '../src/iteration-plans/iteration-plans.service';
+import { OrchestrationRunsController } from '../src/orchestration-runs/orchestration-runs.controller';
+import { OrchestrationRunsService } from '../src/orchestration-runs/orchestration-runs.service';
 import { ProvidersController } from '../src/providers/providers.controller';
 import { ProvidersService } from '../src/providers/providers.service';
 import { RequirementsController } from '../src/requirements/requirements.controller';
@@ -19,13 +21,15 @@ describe('API foundation', () => {
     const requirementsService = new RequirementsService();
     const iterationPlansService = new IterationPlansService(requirementsService);
     const agentsService = new AgentsService(providersService);
+    const orchestrationRunsService = new OrchestrationRunsService(iterationPlansService, agentsService);
     return {
       healthController: new HealthController(),
       workspacesController: new WorkspacesController(workspacesService),
       providersController: new ProvidersController(providersService),
       requirementsController: new RequirementsController(requirementsService),
       iterationPlansController: new IterationPlansController(iterationPlansService),
-      agentsController: new AgentsController(agentsService)
+      agentsController: new AgentsController(agentsService),
+      orchestrationRunsController: new OrchestrationRunsController(orchestrationRunsService)
     };
   }
 
@@ -222,4 +226,184 @@ describe('API foundation', () => {
       })
     ).toThrowError('provider not found');
   });
+
+  it('creates a run and advances to the next stage after confirmation', () => {
+    const {
+      agentsController,
+      iterationPlansController,
+      orchestrationRunsController,
+      providersController,
+      requirementsController
+    } = createControllers();
+
+    seedAgents(agentsController, providersController);
+    const plan = createConfirmedPlan(requirementsController, iterationPlansController);
+
+    const run = orchestrationRunsController.create({
+      planId: plan.id,
+      iterationId: plan.iterations[0].id
+    });
+
+    expect(run.status).toBe('draft');
+    expect(run.stages[0].status).toBe('ready');
+    expect(run.stages[1].status).toBe('pending');
+
+    const started = orchestrationRunsController.start(run.id);
+    expect(started.status).toBe('running');
+    expect(started.stages[0].status).toBe('running');
+
+    const executed = orchestrationRunsController.executeStage(run.id, started.stages[0].id);
+    expect(executed.tasks).toHaveLength(1);
+    expect(executed.handoffs).toHaveLength(1);
+    expect(executed.stages[0].status).toBe('waiting_confirmation');
+
+    const confirmed = orchestrationRunsController.confirmStage(run.id, executed.stages[0].id);
+    expect(confirmed.stages[0].status).toBe('completed');
+    expect(confirmed.currentStageId).toBe(confirmed.stages[1].id);
+    expect(confirmed.stages[1].status).toBe('ready');
+  });
+
+  it('supports pause, resume, fail, and retry for the current stage', () => {
+    const {
+      agentsController,
+      iterationPlansController,
+      orchestrationRunsController,
+      providersController,
+      requirementsController
+    } = createControllers();
+
+    seedAgents(agentsController, providersController);
+    const plan = createConfirmedPlan(requirementsController, iterationPlansController);
+    const run = orchestrationRunsController.create({
+      planId: plan.id,
+      iterationId: plan.iterations[0].id
+    });
+
+    orchestrationRunsController.start(run.id);
+
+    const paused = orchestrationRunsController.pause(run.id);
+    expect(paused.status).toBe('paused');
+
+    const resumed = orchestrationRunsController.resume(run.id);
+    expect(resumed.status).toBe('running');
+
+    const failed = orchestrationRunsController.failStage(run.id, resumed.stages[0].id, {
+      reason: 'Design handoff missing key fields'
+    });
+    expect(failed.status).toBe('failed');
+    expect(failed.stages[0].status).toBe('failed');
+    expect(failed.lastError).toContain('missing key fields');
+
+    const retried = orchestrationRunsController.retryStage(run.id, failed.stages[0].id);
+    expect(retried.status).toBe('running');
+    expect(retried.stages[0].status).toBe('ready');
+    expect(retried.lastError).toBeNull();
+  });
+
+  it('rejects run creation without a confirmed plan or missing role agents', () => {
+    const {
+      agentsController,
+      iterationPlansController,
+      orchestrationRunsController,
+      providersController,
+      requirementsController
+    } = createControllers();
+
+    providersController.create({
+      name: 'Primary Codex',
+      providerType: 'codex',
+      workspaceId: 'ws_1',
+      endpoint: 'https://api.example.com',
+      model: 'gpt-5',
+      apiKey: 'secret'
+    });
+
+    agentsController.create({
+      templateId: 'template_product_manager',
+      name: 'PM Agent Alpha',
+      providerId: 'provider_1',
+      isEnabled: true
+    });
+
+    const requirement = requirementsController.create({
+      title: 'Run creation validation',
+      content: 'Need orchestration checks'
+    });
+    const draftPlan = iterationPlansController.generate(requirement.id);
+
+    expect(() =>
+      orchestrationRunsController.create({
+        planId: draftPlan.id,
+        iterationId: draftPlan.iterations[0].id
+      })
+    ).toThrowError('plan must be confirmed');
+
+    const confirmedPlan = iterationPlansController.confirm(draftPlan.id);
+
+    expect(() =>
+      orchestrationRunsController.create({
+        planId: confirmedPlan.id,
+        iterationId: confirmedPlan.iterations[0].id
+      })
+    ).toThrowError('designer agent is required');
+  });
 });
+
+function seedAgents(agentsController: AgentsController, providersController: ProvidersController) {
+  providersController.create({
+    name: 'Primary Codex',
+    providerType: 'codex',
+    workspaceId: 'ws_1',
+    endpoint: 'https://api.example.com',
+    model: 'gpt-5',
+    apiKey: 'secret'
+  });
+
+  agentsController.create({
+    templateId: 'template_product_manager',
+    name: 'PM Agent Alpha',
+    providerId: 'provider_1',
+    isEnabled: true
+  });
+  agentsController.create({
+    templateId: 'template_designer',
+    name: 'Designer Agent Alpha',
+    providerId: 'provider_1',
+    isEnabled: true
+  });
+  agentsController.create({
+    templateId: 'template_developer',
+    name: 'Developer Agent Alpha',
+    providerId: 'provider_1',
+    isEnabled: true
+  });
+  agentsController.create({
+    templateId: 'template_tester',
+    name: 'Tester Agent Alpha',
+    providerId: 'provider_1',
+    isEnabled: true
+  });
+  agentsController.create({
+    templateId: 'template_release_manager',
+    name: 'Release Manager Agent Alpha',
+    providerId: 'provider_1',
+    isEnabled: true
+  });
+}
+
+function createConfirmedPlan(
+  requirementsController: RequirementsController,
+  iterationPlansController: IterationPlansController
+) {
+  const requirement = requirementsController.create({
+    title: 'Planning core flow',
+    summary: 'Need planning flow',
+    goal: 'Create plan draft',
+    constraints: 'Keep MVP focused',
+    acceptanceCriteria: 'Confirmed plan exists',
+    content: 'Detailed product requirement'
+  });
+
+  const plan = iterationPlansController.generate(requirement.id);
+  return iterationPlansController.confirm(plan.id);
+}

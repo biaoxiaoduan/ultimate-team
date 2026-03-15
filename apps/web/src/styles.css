@@ -266,6 +266,13 @@ body {
   margin-top: 16px;
 }
 
+.record-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
 .iteration-card h3 {
   margin-top: 0;
 }
@@ -274,6 +281,89 @@ body {
   margin: 12px 0 0;
   padding-left: 18px;
   color: #d8d1c6;
+}
+
+.orchestration-detail {
+  margin-top: 18px;
+}
+
+.stage-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.stage-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stage-ready {
+  border-color: rgba(240, 184, 121, 0.3);
+}
+
+.stage-running {
+  border-color: rgba(95, 179, 255, 0.4);
+}
+
+.stage-waiting_confirmation {
+  border-color: rgba(255, 211, 102, 0.4);
+}
+
+.stage-completed {
+  border-color: rgba(102, 214, 156, 0.4);
+}
+
+.stage-failed {
+  border-color: rgba(216, 87, 87, 0.45);
+}
+
+.stage-agent,
+.stage-error {
+  margin-bottom: 0;
+  color: #c7c1b6;
+}
+
+.stage-error {
+  color: #f4b0a7;
+}
+
+.stage-actions {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stage-actions h3,
+.record-grid h3 {
+  margin-top: 0;
+}
+
+.stage-actions label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stage-actions input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f5f2ea;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.compact-stack {
+  margin-top: 12px;
+}
+
+.compact-card p {
+  margin-bottom: 0;
 }
 
 @media (max-width: 640px) {

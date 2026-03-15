@@ -6,15 +6,18 @@ import {
   defaultPlans,
   defaultProviders,
   defaultRequirements,
+  defaultRuns,
   defaultWorkspaces
 } from './data';
 import {
   AgentInstance,
   AgentTemplate,
   IterationPlan,
+  OrchestrationRun,
   ProviderConfig,
   Requirement,
   RequirementVersion,
+  RunStage,
   Workspace
 } from './types';
 
@@ -29,15 +32,6 @@ type RequirementFormState = {
   content: string;
 };
 
-const initialRequirementForm: RequirementFormState = {
-  title: '',
-  summary: '',
-  goal: '',
-  constraints: '',
-  acceptanceCriteria: '',
-  content: ''
-};
-
 type AgentFormState = {
   templateId: string;
   name: string;
@@ -45,6 +39,15 @@ type AgentFormState = {
   systemPrompt: string;
   taskTypes: string;
   isEnabled: boolean;
+};
+
+const initialRequirementForm: RequirementFormState = {
+  title: '',
+  summary: '',
+  goal: '',
+  constraints: '',
+  acceptanceCriteria: '',
+  content: ''
 };
 
 const initialAgentForm: AgentFormState = {
@@ -63,13 +66,18 @@ export function App() {
   const [plans, setPlans] = useState<IterationPlan[]>(defaultPlans);
   const [agentTemplates, setAgentTemplates] = useState<AgentTemplate[]>(defaultAgentTemplates);
   const [agentInstances, setAgentInstances] = useState<AgentInstance[]>(defaultAgentInstances);
-  const [selectedRequirementId, setSelectedRequirementId] = useState<string>('');
+  const [runs, setRuns] = useState<OrchestrationRun[]>(defaultRuns);
+  const [selectedRequirementId, setSelectedRequirementId] = useState('');
   const [selectedVersions, setSelectedVersions] = useState<RequirementVersion[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [selectedIterationId, setSelectedIterationId] = useState('');
+  const [selectedRunId, setSelectedRunId] = useState('');
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [revisionContent, setRevisionContent] = useState('');
+  const [failureReason, setFailureReason] = useState('');
   const [requirementForm, setRequirementForm] = useState(initialRequirementForm);
   const [agentForm, setAgentForm] = useState<AgentFormState>(initialAgentForm);
-  const [statusMessage, setStatusMessage] = useState('Loading workspace and planning context...');
+  const [statusMessage, setStatusMessage] = useState('Loading orchestration context...');
 
   useEffect(() => {
     void refreshAll();
@@ -84,17 +92,72 @@ export function App() {
     void loadRequirementVersions(selectedRequirementId);
   }, [selectedRequirementId]);
 
+  useEffect(() => {
+    setSelectedRequirementId((current) => {
+      if (requirements.some((item) => item.id === current)) {
+        return current;
+      }
+
+      return requirements[0]?.id ?? '';
+    });
+  }, [requirements]);
+
+  useEffect(() => {
+    const confirmedPlans = plans.filter((plan) => plan.status === 'confirmed');
+    setSelectedPlanId((current) => {
+      if (confirmedPlans.some((plan) => plan.id === current)) {
+        return current;
+      }
+
+      return confirmedPlans[0]?.id ?? '';
+    });
+  }, [plans]);
+
+  useEffect(() => {
+    const plan = plans.find((item) => item.id === selectedPlanId);
+    setSelectedIterationId((current) => {
+      if (plan?.iterations.some((item) => item.id === current)) {
+        return current;
+      }
+
+      return plan?.iterations[0]?.id ?? '';
+    });
+  }, [plans, selectedPlanId]);
+
+  useEffect(() => {
+    setSelectedRunId((current) => {
+      if (runs.some((run) => run.id === current)) {
+        return current;
+      }
+
+      return runs[0]?.id ?? '';
+    });
+  }, [runs]);
+
+  const defaultWorkspace = workspaces.find((workspace) => workspace.isDefault);
+  const confirmedPlans = plans.filter((plan) => plan.status === 'confirmed');
+  const selectedPlan = confirmedPlans.find((plan) => plan.id === selectedPlanId);
+  const selectedRun = runs.find((run) => run.id === selectedRunId);
+  const currentStage = getCurrentStage(selectedRun);
+
   async function refreshAll() {
     try {
-      const [workspaceData, providerData, requirementData, planData] = await Promise.all([
+      const [
+        workspaceData,
+        providerData,
+        requirementData,
+        planData,
+        templateData,
+        instanceData,
+        runData
+      ] = await Promise.all([
         fetchJson<Workspace[]>('/workspaces'),
         fetchJson<ProviderConfig[]>('/providers'),
         fetchJson<Requirement[]>('/requirements'),
-        fetchJson<IterationPlan[]>('/iteration-plans')
-      ]);
-      const [templateData, instanceData] = await Promise.all([
+        fetchJson<IterationPlan[]>('/iteration-plans'),
         fetchJson<AgentTemplate[]>('/agents/templates'),
-        fetchJson<AgentInstance[]>('/agents/instances')
+        fetchJson<AgentInstance[]>('/agents/instances'),
+        fetchJson<OrchestrationRun[]>('/orchestration-runs')
       ]);
 
       setWorkspaces(workspaceData);
@@ -103,11 +166,7 @@ export function App() {
       setPlans(planData);
       setAgentTemplates(templateData);
       setAgentInstances(instanceData);
-
-      if (requirementData.length > 0) {
-        setSelectedRequirementId((current) => current || requirementData[0].id);
-      }
-
+      setRuns(runData);
       setStatusMessage('Connected to local API.');
     } catch {
       setStatusMessage('API unavailable. Showing local fallback data.');
@@ -121,6 +180,18 @@ export function App() {
     } catch {
       setSelectedVersions([]);
     }
+  }
+
+  async function handleToggleProvider(provider: ProviderConfig) {
+    await fetchJson<ProviderConfig>(`/providers/${provider.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        isEnabled: !provider.isEnabled
+      })
+    });
+
+    await refreshAll();
+    setStatusMessage(provider.isEnabled ? 'Provider disabled.' : 'Provider enabled.');
   }
 
   async function handleCreateRequirement(event: FormEvent<HTMLFormElement>) {
@@ -224,13 +295,15 @@ export function App() {
   }
 
   async function handleDeleteAgent(agentId: string) {
-    await fetchJson<AgentInstance>(`/agents/instances/${agentId}`, {
+    await fetchJson(`/agents/instances/${agentId}`, {
       method: 'DELETE'
     });
+
     if (editingAgentId === agentId) {
       setEditingAgentId(null);
       setAgentForm(initialAgentForm);
     }
+
     await refreshAll();
     setStatusMessage('Agent deleted.');
   }
@@ -242,101 +315,171 @@ export function App() {
         isEnabled: !agent.isEnabled
       })
     });
+
     await refreshAll();
     setStatusMessage(agent.isEnabled ? 'Agent disabled.' : 'Agent enabled.');
   }
 
-  const defaultWorkspace = workspaces.find((workspace) => workspace.isDefault);
+  async function handleCreateRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedPlanId || !selectedIterationId) {
+      return;
+    }
+
+    const run = await fetchJson<OrchestrationRun>('/orchestration-runs', {
+      method: 'POST',
+      body: JSON.stringify({
+        planId: selectedPlanId,
+        iterationId: selectedIterationId
+      })
+    });
+
+    setSelectedRunId(run.id);
+    await refreshAll();
+    setStatusMessage('Orchestration run created.');
+  }
+
+  async function handleStartRun(runId: string) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${runId}/start`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Run started.');
+  }
+
+  async function handlePauseRun(runId: string) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${runId}/pause`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Run paused.');
+  }
+
+  async function handleResumeRun(runId: string) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${runId}/resume`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Run resumed.');
+  }
+
+  async function handleExecuteStage(run: OrchestrationRun, stage: RunStage) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${run.id}/stages/${stage.id}/execute`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Current stage executed.');
+  }
+
+  async function handleConfirmStage(run: OrchestrationRun, stage: RunStage) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${run.id}/stages/${stage.id}/confirm`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Current stage confirmed.');
+  }
+
+  async function handleFailStage(run: OrchestrationRun, stage: RunStage) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${run.id}/stages/${stage.id}/fail`, {
+      method: 'POST',
+      body: JSON.stringify({
+        reason: failureReason.trim() || 'Manual review blocked this stage.'
+      })
+    });
+
+    setFailureReason('');
+    await refreshAll();
+    setStatusMessage('Current stage marked as failed.');
+  }
+
+  async function handleRetryStage(run: OrchestrationRun, stage: RunStage) {
+    await fetchJson<OrchestrationRun>(`/orchestration-runs/${run.id}/stages/${stage.id}/retry`, {
+      method: 'POST'
+    });
+
+    await refreshAll();
+    setStatusMessage('Failed stage retried.');
+  }
 
   return (
     <main className="app-shell">
       <header className="hero">
-        <p className="eyebrow">Iteration 02</p>
-        <h1>requirements to iteration planning</h1>
+        <p className="eyebrow">Iteration 04</p>
+        <h1>agent orchestration execution center</h1>
         <p className="hero-copy">
-          Capture requirements, manage revisions, and turn the latest requirement version into a
-          structured delivery plan.
+          Turn confirmed plans into orchestrated execution runs, coordinate role agents, and track
+          every stage handoff with manual control over failures and approvals.
         </p>
         <p className="status-banner">{statusMessage}</p>
       </header>
 
       <section className="panel-grid">
         <article className="panel">
-          <h2>Workspace and providers</h2>
-          <p className="panel-subtitle">Iteration 1 foundation remains visible as planning context.</p>
-          {defaultWorkspace ? (
-            <dl className="metadata-list">
-              <div>
-                <dt>Default workspace</dt>
-                <dd>{defaultWorkspace.name}</dd>
-              </div>
-              <div>
-                <dt>Root path</dt>
-                <dd>{defaultWorkspace.rootPath}</dd>
-              </div>
-              <div>
-                <dt>Providers</dt>
-                <dd>{providers.length}</dd>
-              </div>
-            </dl>
-          ) : (
-            <p>No workspace available.</p>
-          )}
+          <h2>Workspace settings</h2>
+          <p className="panel-subtitle">Current single-user execution workspace.</p>
+          <dl className="metadata-list">
+            <div>
+              <dt>Name</dt>
+              <dd>{defaultWorkspace?.name ?? 'Unavailable'}</dd>
+            </div>
+            <div>
+              <dt>Path</dt>
+              <dd>{defaultWorkspace?.rootPath ?? 'Unavailable'}</dd>
+            </div>
+            <div>
+              <dt>Description</dt>
+              <dd>{defaultWorkspace?.description ?? 'Unavailable'}</dd>
+            </div>
+          </dl>
         </article>
 
         <article className="panel">
-          <h2>Create requirement</h2>
-          <p className="panel-subtitle">This is the input that later feeds the product manager agent.</p>
-          <form className="stack-form" onSubmit={handleCreateRequirement}>
-            <input
-              aria-label="Requirement title"
-              placeholder="Requirement title"
-              value={requirementForm.title}
-              onChange={(event) => setRequirementForm((current) => ({ ...current, title: event.target.value }))}
-            />
-            <textarea
-              aria-label="Requirement summary"
-              placeholder="Requirement summary"
-              value={requirementForm.summary}
-              onChange={(event) =>
-                setRequirementForm((current) => ({ ...current, summary: event.target.value }))
-              }
-            />
-            <textarea
-              aria-label="Requirement goal"
-              placeholder="Requirement goal"
-              value={requirementForm.goal}
-              onChange={(event) => setRequirementForm((current) => ({ ...current, goal: event.target.value }))}
-            />
-            <textarea
-              aria-label="Requirement constraints"
-              placeholder="Requirement constraints"
-              value={requirementForm.constraints}
-              onChange={(event) =>
-                setRequirementForm((current) => ({ ...current, constraints: event.target.value }))
-              }
-            />
-            <textarea
-              aria-label="Acceptance criteria"
-              placeholder="Acceptance criteria"
-              value={requirementForm.acceptanceCriteria}
-              onChange={(event) =>
-                setRequirementForm((current) => ({
-                  ...current,
-                  acceptanceCriteria: event.target.value
-                }))
-              }
-            />
-            <textarea
-              aria-label="Requirement content"
-              placeholder="Requirement content"
-              value={requirementForm.content}
-              onChange={(event) =>
-                setRequirementForm((current) => ({ ...current, content: event.target.value }))
-              }
-            />
-            <button type="submit">Create requirement</button>
-          </form>
+          <h2>Provider settings</h2>
+          <p className="panel-subtitle">Toggle available execution providers.</p>
+          <ul className="provider-list">
+            {providers.map((provider) => (
+              <li key={provider.id} className="provider-card">
+                <div>
+                  <strong>{provider.name}</strong>
+                  <p>
+                    {provider.providerType} · {provider.model}
+                  </p>
+                </div>
+                <button type="button" onClick={() => void handleToggleProvider(provider)}>
+                  {provider.isEnabled ? 'Disable' : 'Enable'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="panel">
+          <h2>Delivery overview</h2>
+          <p className="panel-subtitle">High-level orchestration readiness across the current MVP.</p>
+          <dl className="metadata-list">
+            <div>
+              <dt>Requirements</dt>
+              <dd>{requirements.length}</dd>
+            </div>
+            <div>
+              <dt>Confirmed plans</dt>
+              <dd>{confirmedPlans.length}</dd>
+            </div>
+            <div>
+              <dt>Enabled agents</dt>
+              <dd>{agentInstances.filter((agent) => agent.isEnabled).length}</dd>
+            </div>
+            <div>
+              <dt>Runs</dt>
+              <dd>{runs.length}</dd>
+            </div>
+          </dl>
         </article>
       </section>
 
@@ -344,197 +487,256 @@ export function App() {
         <article className="panel">
           <div className="section-heading">
             <div>
-              <h2>Requirements</h2>
-              <p className="panel-subtitle">Current requirements and their latest versions.</p>
+              <h2>Requirements center</h2>
+              <p className="panel-subtitle">Capture requirements, revisions, and plan generation requests.</p>
             </div>
           </div>
+
+          <form className="stack-form" onSubmit={handleCreateRequirement}>
+            <label>
+              Requirement title
+              <input
+                value={requirementForm.title}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({ ...current, title: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Requirement summary
+              <textarea
+                value={requirementForm.summary}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({ ...current, summary: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Goal
+              <input
+                value={requirementForm.goal}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({ ...current, goal: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Constraints
+              <input
+                value={requirementForm.constraints}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({ ...current, constraints: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Acceptance criteria
+              <input
+                value={requirementForm.acceptanceCriteria}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({
+                    ...current,
+                    acceptanceCriteria: event.target.value
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Requirement content
+              <textarea
+                value={requirementForm.content}
+                onChange={(event) =>
+                  setRequirementForm((current) => ({ ...current, content: event.target.value }))
+                }
+              />
+            </label>
+            <button type="submit">Create requirement</button>
+          </form>
+
           <div className="card-stack">
-            {requirements.length === 0 ? (
-              <p>No requirements yet.</p>
-            ) : (
-              requirements.map((requirement) => (
-                <article key={requirement.id} className="record-card">
-                  <div className="record-header">
-                    <div>
-                      <strong>{requirement.title}</strong>
-                      <p>
-                        Version {requirement.currentVersionNumber} · {requirement.status}
-                      </p>
-                    </div>
+            {requirements.map((requirement) => (
+              <article key={requirement.id} className="record-card">
+                <div className="record-header">
+                  <div>
+                    <strong>{requirement.title}</strong>
+                    <p>{requirement.summary || requirement.currentContent}</p>
+                  </div>
+                  <div className="action-row">
+                    <span className="pill">{requirement.status}</span>
                     <button type="button" onClick={() => void handleGeneratePlan(requirement.id)}>
                       Generate plan
                     </button>
                   </div>
-                  <p>{requirement.summary || requirement.currentContent}</p>
-                  <div className="pill-row">
-                    <span className="pill">Goal: {requirement.goal || 'not set'}</span>
-                    <span className="pill">Constraints: {requirement.constraints || 'none'}</span>
-                  </div>
-                </article>
-              ))
-            )}
+                </div>
+                <div className="pill-row">
+                  <span className="pill">v{requirement.currentVersionNumber}</span>
+                  <span className="pill">{requirement.goal || 'Goal pending'}</span>
+                </div>
+              </article>
+            ))}
           </div>
         </article>
 
         <article className="panel">
-          <h2>Requirement revisions</h2>
-          <p className="panel-subtitle">Append a new requirement version before regenerating a plan.</p>
-          <div className="stack-form">
-            <select
-              aria-label="Requirement selection"
-              value={selectedRequirementId}
-              onChange={(event) => setSelectedRequirementId(event.target.value)}
-            >
-              <option value="">Select requirement</option>
-              {requirements.map((requirement) => (
-                <option key={requirement.id} value={requirement.id}>
-                  {requirement.title}
-                </option>
-              ))}
-            </select>
-            <form className="stack-form" onSubmit={handleAddVersion}>
+          <h2>Revisions and plans</h2>
+          <p className="panel-subtitle">Switch requirement versions and confirm delivery plans.</p>
+
+          <form className="stack-form" onSubmit={handleAddVersion}>
+            <label>
+              Requirement
+              <select
+                value={selectedRequirementId}
+                onChange={(event) => setSelectedRequirementId(event.target.value)}
+              >
+                <option value="">Select requirement</option>
+                {requirements.map((requirement) => (
+                  <option key={requirement.id} value={requirement.id}>
+                    {requirement.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              New revision content
               <textarea
-                aria-label="New version content"
-                placeholder="New version content"
                 value={revisionContent}
                 onChange={(event) => setRevisionContent(event.target.value)}
               />
-              <button type="submit">Add version</button>
-            </form>
-          </div>
-          <ul className="version-list">
-            {selectedVersions.map((version) => (
-              <li key={version.id}>
-                <strong>v{version.version}</strong>
-                <p>{version.content}</p>
-              </li>
-            ))}
-          </ul>
-        </article>
-      </section>
+            </label>
+            <button type="submit">Add version</button>
+          </form>
 
-      <section className="panel">
-        <h2>Iteration plans</h2>
-        <p className="panel-subtitle">Draft plans can be reviewed and confirmed into a frozen plan.</p>
-        <div className="card-stack">
-          {plans.length === 0 ? (
-            <p>No plans generated yet.</p>
-          ) : (
-            plans.map((plan) => (
+          <div className="record-card">
+            <strong>Version history</strong>
+            <ol className="version-list">
+              {selectedVersions.map((version) => (
+                <li key={version.id}>
+                  <p>
+                    Version {version.version}: {version.content}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="card-stack">
+            {plans.map((plan) => (
               <article key={plan.id} className="record-card">
                 <div className="record-header">
                   <div>
                     <strong>{plan.title}</strong>
-                    <p>
-                      {plan.status} · {plan.iterations.length} iterations
-                    </p>
+                    <p>{plan.summary}</p>
                   </div>
-                  <button type="button" onClick={() => void handleConfirmPlan(plan.id)}>
-                    {plan.status === 'confirmed' ? 'Confirmed' : 'Confirm plan'}
-                  </button>
+                  <div className="action-row">
+                    <span className="pill">{plan.status}</span>
+                    {plan.status !== 'confirmed' ? (
+                      <button type="button" onClick={() => void handleConfirmPlan(plan.id)}>
+                        Confirm plan
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <p>{plan.summary}</p>
+
                 <div className="iteration-grid">
                   {plan.iterations.map((iteration) => (
-                    <section key={iteration.id} className="iteration-card">
+                    <div key={iteration.id} className="iteration-card">
                       <h3>{iteration.title}</h3>
                       <p>{iteration.goal}</p>
                       <ul>
-                        {iteration.workPackages.map((workPackage) => (
-                          <li key={workPackage.id}>
-                            <strong>{workPackage.role}</strong>: {workPackage.title}
+                        {iteration.workPackages.map((item) => (
+                          <li key={item.id}>
+                            {formatRoleLabel(item.role)}: {item.title}
                           </li>
                         ))}
                       </ul>
-                    </section>
+                    </div>
                   ))}
                 </div>
               </article>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section className="content-grid">
         <article className="panel">
-          <h2>Agent templates</h2>
-          <p className="panel-subtitle">Built-in roles that define the default behavior for sub-agents.</p>
+          <h2>Agent center</h2>
+          <p className="panel-subtitle">Manage role templates and executable agent instances.</p>
+
           <div className="card-stack">
             {agentTemplates.map((template) => (
               <article key={template.id} className="record-card">
                 <div className="record-header">
                   <div>
                     <strong>{template.name}</strong>
-                    <p>{template.role}</p>
+                    <p>{template.description}</p>
                   </div>
-                </div>
-                <p>{template.description}</p>
-                <div className="pill-row">
-                  {template.defaultTaskTypes.map((taskType) => (
-                    <span key={taskType} className="pill">
-                      {taskType}
-                    </span>
-                  ))}
+                  <span className="pill">{formatRoleLabel(template.role)}</span>
                 </div>
               </article>
             ))}
           </div>
-        </article>
 
-        <article className="panel">
-          <h2>{editingAgentId ? 'Edit agent' : 'Create agent'}</h2>
-          <p className="panel-subtitle">Bind a role template to a configured provider.</p>
           <form className="stack-form" onSubmit={handleCreateOrUpdateAgent}>
-            <select
-              aria-label="Agent template"
-              value={agentForm.templateId}
-              onChange={(event) =>
-                setAgentForm((current) => ({ ...current, templateId: event.target.value }))
-              }
-            >
-              <option value="">Select template</option>
-              {agentTemplates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
-            </select>
-            <input
-              aria-label="Agent name"
-              placeholder="Agent name"
-              value={agentForm.name}
-              onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))}
-            />
-            <select
-              aria-label="Agent provider"
-              value={agentForm.providerId}
-              onChange={(event) =>
-                setAgentForm((current) => ({ ...current, providerId: event.target.value }))
-              }
-            >
-              <option value="">Select provider</option>
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
-                </option>
-              ))}
-            </select>
-            <textarea
-              aria-label="Agent system prompt"
-              placeholder="Agent system prompt"
-              value={agentForm.systemPrompt}
-              onChange={(event) =>
-                setAgentForm((current) => ({ ...current, systemPrompt: event.target.value }))
-              }
-            />
-            <input
-              aria-label="Agent task types"
-              placeholder="Comma separated task types"
-              value={agentForm.taskTypes}
-              onChange={(event) =>
-                setAgentForm((current) => ({ ...current, taskTypes: event.target.value }))
-              }
-            />
+            <label>
+              Template
+              <select
+                value={agentForm.templateId}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, templateId: event.target.value }))
+                }
+              >
+                <option value="">Select template</option>
+                {agentTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Agent name
+              <input
+                value={agentForm.name}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, name: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Provider
+              <select
+                value={agentForm.providerId}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, providerId: event.target.value }))
+                }
+              >
+                <option value="">Select provider</option>
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              System prompt
+              <textarea
+                value={agentForm.systemPrompt}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, systemPrompt: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Task types
+              <input
+                value={agentForm.taskTypes}
+                onChange={(event) =>
+                  setAgentForm((current) => ({ ...current, taskTypes: event.target.value }))
+                }
+              />
+            </label>
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -543,7 +745,7 @@ export function App() {
                   setAgentForm((current) => ({ ...current, isEnabled: event.target.checked }))
                 }
               />
-              <span>Enabled</span>
+              Enabled
             </label>
             <div className="action-row">
               <button type="submit">{editingAgentId ? 'Update agent' : 'Create agent'}</button>
@@ -561,60 +763,241 @@ export function App() {
               ) : null}
             </div>
           </form>
-        </article>
-      </section>
 
-      <section className="panel">
-        <h2>Agent instances</h2>
-        <p className="panel-subtitle">The concrete agents that later participate in orchestration runs.</p>
-        <div className="card-stack">
-          {agentInstances.length === 0 ? (
-            <p>No agents created yet.</p>
-          ) : (
-            agentInstances.map((agent) => (
+          <div className="card-stack">
+            {agentInstances.map((agent) => (
               <article key={agent.id} className="record-card">
                 <div className="record-header">
                   <div>
                     <strong>{agent.name}</strong>
-                    <p>
-                      {agent.templateId} · {agent.isEnabled ? 'enabled' : 'disabled'}
-                    </p>
+                    <p>{agent.systemPrompt}</p>
                   </div>
-                  <div className="action-row">
-                    <button type="button" onClick={() => startEditAgent(agent)}>
-                      Edit
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void handleToggleAgent(agent)}>
-                      {agent.isEnabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger-button"
-                      onClick={() => void handleDeleteAgent(agent.id)}
-                    >
-                      Delete
-                    </button>
+                  <div className="pill-row">
+                    <span className="pill">{agent.isEnabled ? 'enabled' : 'disabled'}</span>
+                    <span className="pill">{agent.providerId}</span>
                   </div>
                 </div>
-                <p>{agent.systemPrompt || 'No prompt configured.'}</p>
                 <div className="pill-row">
-                  <span className="pill">Provider: {agent.providerId}</span>
                   {agent.taskTypes.map((taskType) => (
                     <span key={taskType} className="pill">
                       {taskType}
                     </span>
                   ))}
                 </div>
+                <div className="action-row">
+                  <button type="button" onClick={() => startEditAgent(agent)}>
+                    Edit
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleToggleAgent(agent)}>
+                    {agent.isEnabled ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    aria-label={`Delete ${agent.name}`}
+                    onClick={() => void handleDeleteAgent(agent.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
               </article>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel">
+          <h2>Orchestration center</h2>
+          <p className="panel-subtitle">Create runs from confirmed plans and manually drive stage flow.</p>
+
+          <form className="stack-form" onSubmit={handleCreateRun}>
+            <label>
+              Confirmed plan
+              <select value={selectedPlanId} onChange={(event) => setSelectedPlanId(event.target.value)}>
+                <option value="">Select plan</option>
+                {confirmedPlans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Iteration
+              <select
+                value={selectedIterationId}
+                onChange={(event) => setSelectedIterationId(event.target.value)}
+              >
+                <option value="">Select iteration</option>
+                {selectedPlan?.iterations.map((iteration) => (
+                  <option key={iteration.id} value={iteration.id}>
+                    {iteration.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="submit">Create run</button>
+          </form>
+
+          <div className="card-stack">
+            {runs.map((run) => (
+              <article key={run.id} className="record-card">
+                <div className="record-header">
+                  <div>
+                    <strong>{run.iterationTitle}</strong>
+                    <p>
+                      {run.id} · {run.status}
+                    </p>
+                  </div>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={() => setSelectedRunId(run.id)}>
+                      View run
+                    </button>
+                    {run.status === 'draft' ? (
+                      <button type="button" onClick={() => void handleStartRun(run.id)}>
+                        Start run
+                      </button>
+                    ) : null}
+                    {run.status === 'running' ? (
+                      <button type="button" className="ghost-button" onClick={() => void handlePauseRun(run.id)}>
+                        Pause
+                      </button>
+                    ) : null}
+                    {run.status === 'paused' || run.status === 'failed' ? (
+                      <button type="button" onClick={() => void handleResumeRun(run.id)}>
+                        Resume
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="pill-row">
+                  <span className="pill">tasks {run.tasks.length}</span>
+                  <span className="pill">handoffs {run.handoffs.length}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="record-card orchestration-detail">
+            <div className="section-heading">
+              <div>
+                <strong>{selectedRun?.iterationTitle ?? 'Select a run'}</strong>
+                <p className="panel-subtitle">
+                  {selectedRun
+                    ? `Status: ${selectedRun.status}${selectedRun.lastError ? ` · ${selectedRun.lastError}` : ''}`
+                    : 'Run details appear here after selection.'}
+                </p>
+              </div>
+              {selectedRun ? <span className="pill">{selectedRun.id}</span> : null}
+            </div>
+
+            {selectedRun ? (
+              <>
+                <div className="stage-list">
+                  {selectedRun.stages.map((stage) => (
+                    <div key={stage.id} className={`stage-card stage-${stage.status}`}>
+                      <div className="record-header">
+                        <div>
+                          <strong>{formatRoleLabel(stage.role)}</strong>
+                          <p>{stage.title}</p>
+                        </div>
+                        <span className="pill">{stage.status}</span>
+                      </div>
+                      <p className="stage-agent">Agent: {stage.agentName}</p>
+                      {stage.failureReason ? <p className="stage-error">{stage.failureReason}</p> : null}
+                    </div>
+                  ))}
+                </div>
+
+                {currentStage ? (
+                  <div className="stage-actions">
+                    <h3>Current stage controls</h3>
+                    <p>
+                      {formatRoleLabel(currentStage.role)} · {currentStage.status}
+                    </p>
+                    <label>
+                      Fail reason
+                      <input
+                        value={failureReason}
+                        onChange={(event) => setFailureReason(event.target.value)}
+                        placeholder="Record the issue blocking this stage"
+                      />
+                    </label>
+                    <div className="action-row">
+                      {selectedRun.status === 'running' &&
+                      (currentStage.status === 'ready' || currentStage.status === 'running') ? (
+                        <button type="button" onClick={() => void handleExecuteStage(selectedRun, currentStage)}>
+                          Execute stage
+                        </button>
+                      ) : null}
+                      {selectedRun.status === 'running' && currentStage.status === 'waiting_confirmation' ? (
+                        <button type="button" onClick={() => void handleConfirmStage(selectedRun, currentStage)}>
+                          Confirm stage
+                        </button>
+                      ) : null}
+                      {selectedRun.status === 'running' &&
+                      (currentStage.status === 'ready' ||
+                        currentStage.status === 'running' ||
+                        currentStage.status === 'waiting_confirmation') ? (
+                        <button type="button" className="danger-button" onClick={() => void handleFailStage(selectedRun, currentStage)}>
+                          Fail stage
+                        </button>
+                      ) : null}
+                      {currentStage.status === 'failed' ? (
+                        <button type="button" onClick={() => void handleRetryStage(selectedRun, currentStage)}>
+                          Retry stage
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="record-grid">
+                  <div>
+                    <h3>Generated tasks</h3>
+                    <div className="card-stack compact-stack">
+                      {selectedRun.tasks.map((task) => (
+                        <div key={task.id} className="record-card compact-card">
+                          <strong>{task.taskType}</strong>
+                          <p>{task.outputSummary}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3>Handoffs</h3>
+                    <div className="card-stack compact-stack">
+                      {selectedRun.handoffs.map((handoff) => (
+                        <div key={handoff.id} className="record-card compact-card">
+                          <strong>{handoff.title}</strong>
+                          <p>{handoff.summary}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </article>
       </section>
     </main>
   );
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+function getCurrentStage(run: OrchestrationRun | undefined) {
+  if (!run?.currentStageId) {
+    return undefined;
+  }
+
+  return run.stages.find((stage) => stage.id === run.currentStageId);
+}
+
+function formatRoleLabel(role: string) {
+  return role.replaceAll('_', ' ');
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json'

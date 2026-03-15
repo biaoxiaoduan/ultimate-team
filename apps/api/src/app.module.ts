@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AgentsModule } from './agents/agents.module';
 import { HealthModule } from './health/health.module';
 import { IterationPlansModule } from './iteration-plans/iteration-plans.module';
+import { OrchestrationRunsModule } from './orchestration-runs/orchestration-runs.module';
 import { ProvidersModule } from './providers/providers.module';
 import { RequirementsModule } from './requirements/requirements.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
@@ -14,7 +15,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     ProvidersModule,
     RequirementsModule,
     IterationPlansModule,
-    AgentsModule
+    AgentsModule,
+    OrchestrationRunsModule
   ]
 })
 export class AppModule {}

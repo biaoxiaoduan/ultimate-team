@@ -60,6 +60,17 @@ export class AgentsService {
     return this.agents;
   }
 
+  findEnabledByRole(role: AgentTemplate['role']) {
+    return this.agents.find((agent) => {
+      if (!agent.isEnabled) {
+        return false;
+      }
+
+      const template = this.templates.find((item) => item.id === agent.templateId);
+      return template?.role === role;
+    });
+  }
+
   create(input: CreateAgentInput) {
     const template = this.templates.find((item) => item.id === input.templateId);
     if (!template) {

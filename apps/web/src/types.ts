@@ -82,3 +82,61 @@ export type AgentInstance = {
   taskTypes: string[];
   isEnabled: boolean;
 };
+
+export type RunStage = {
+  id: string;
+  runId: string;
+  role: 'product_manager' | 'designer' | 'developer' | 'tester' | 'release_manager';
+  title: string;
+  agentId: string;
+  agentName: string;
+  status: 'pending' | 'ready' | 'running' | 'waiting_confirmation' | 'completed' | 'failed';
+  sequence: number;
+  startedAt?: string;
+  completedAt?: string;
+  failureReason?: string;
+};
+
+export type AgentTask = {
+  id: string;
+  runId: string;
+  stageId: string;
+  agentId: string;
+  taskType: string;
+  prompt: string;
+  inputSummary: string;
+  outputSummary: string;
+  status: 'pending' | 'completed' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Handoff = {
+  id: string;
+  runId: string;
+  fromStageId: string;
+  toStageId: string;
+  fromRole: 'product_manager' | 'designer' | 'developer' | 'tester' | 'release_manager';
+  toRole: 'product_manager' | 'designer' | 'developer' | 'tester' | 'release_manager';
+  title: string;
+  summary: string;
+  status: 'pending' | 'delivered';
+  createdAt: string;
+  deliveredAt?: string;
+};
+
+export type OrchestrationRun = {
+  id: string;
+  planId: string;
+  requirementId: string;
+  iterationId: string;
+  iterationTitle: string;
+  status: 'draft' | 'running' | 'paused' | 'failed' | 'completed';
+  currentStageId: string | null;
+  lastError: string | null;
+  stages: RunStage[];
+  tasks: AgentTask[];
+  handoffs: Handoff[];
+  startedAt?: string;
+  completedAt?: string;
+};
